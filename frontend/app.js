@@ -24,11 +24,8 @@ document.addEventListener('DOMContentLoaded', () => {
 async function fetchData() {
   try {
     const url = `${API_BASE}/api/ad`;
-    console.log('[DEBUG] Fetching:', url);
     const res = await fetch(url);
-    console.log('[DEBUG] Status:', res.status, res.statusText);
     const json = await res.json();
-    console.log('[DEBUG] Response:', JSON.stringify(json).substring(0, 200));
 
     // Handle REST API v1 double-wrapped response
     let data = json;
@@ -41,8 +38,7 @@ async function fetchData() {
       document.getElementById('last-updated').textContent = `Last: ${allData[allData.length - 1].date}`;
       renderAll();
     } else {
-      console.log('[DEBUG] No data, response was:', JSON.stringify(data).substring(0, 300));
-      showEmpty();
+      showEmpty('No data yet');
     }
   } catch (err) {
     console.error('Fetch error:', err);
