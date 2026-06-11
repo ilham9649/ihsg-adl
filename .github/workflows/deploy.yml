@@ -35,9 +35,11 @@ jobs:
       - name: Invalidate CloudFront
         run: |
           DISTRIBUTION_ID=$(aws cloudfront list-distributions \
+            --region us-east-1 \
             --query "DistributionList.Items[?Aliases.Items[0]=='finance.sulaksono.id'].Id" \
             --output text)
           aws cloudfront create-invalidation \
+            --region us-east-1 \
             --distribution-id $DISTRIBUTION_ID \
             --paths "/*"
 

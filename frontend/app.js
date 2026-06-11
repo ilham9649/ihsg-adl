@@ -23,24 +23,35 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── Fetch ──
 async function fetchData() {
   try {
-    const res = await fetch(`${API_BASE}/api/ad`);
+    const url = `${API_BASE}/api/ad`;
+    console.log('[DEBUG] Fetching:', url);
+    const res = await fetch(url);
+    console.log('[DEBUG] Status:', res.status, res.statusText);
     const json = await res.json();
+    console.log('[DEBUG] Response:', JSON.stringify(json).substring(0, 200));
 
-    if (json.success && json.data.length > 0) {
-      allData = json.data;
+    // Handle REST API v1 double-wrapped response
+    let data = json;
+    if (json.body && json.statusCode) {
+      try { data = JSON.parse(json.body); } catch(e) {}
+    }
+
+    if (data.success && data.data && data.data.length > 0) {
+      allData = data.data;
       document.getElementById('last-updated').textContent = `Last: ${allData[allData.length - 1].date}`;
       renderAll();
     } else {
+      console.log('[DEBUG] No data, response was:', JSON.stringify(data).substring(0, 300));
       showEmpty();
     }
   } catch (err) {
     console.error('Fetch error:', err);
-    document.getElementById('last-updated').textContent = 'Error loading';
+    document.getElementById('last-updated').textContent = `Error: ${err.message}`;
     // Show refresh prompt
     document.querySelector('.cards').innerHTML = `
       <div class="card" style="grid-column: 1 / -1;">
-        <div class="card-label">No Data Yet</div>
-        <div class="card-value" style="font-size: 1rem;">Click "Refresh" to fetch initial data from Yahoo Finance</div>
+        <div class="card-label">Error</div>
+        <div class="card-value" style="font-size: 0.85rem; color: #ef4444;">${err.message}</div>
       </div>
     `;
   }
@@ -70,8 +81,8 @@ async function refreshData() {
   }
 }
 
-function showEmpty() {
-  document.getElementById('last-updated').textContent = 'No data';
+function showEmpty(msg) {
+  document.getElementById('last-updated').textContent = msg || 'No data';
 }
 
 // ── Render ──
