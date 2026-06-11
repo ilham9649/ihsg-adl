@@ -1,81 +1,62 @@
 // ──────────────────────────────────────────────
-// Yahoo Finance Scraper
-// Fetches daily OHLC for a batch of tickers
+// Stock Data Scraper (using Yahoo Finance v8 chart API)
 // ──────────────────────────────────────────────
 
-import yahooFinance from 'yahoo-finance2';
-
-// Suppress yahoo-finance2 logging
-yahooFinance.setGlobalConfig({ logger: { warn: () => {}, error: () => {}, info: () => {} } });
+const YAHOO_BASE = 'https://query1.finance.yahoo.com';
 
 /**
- * Fetch historical quotes for a single ticker
- * Returns array of { date, open, high, low, close, volume }
+ * Fetch historical chart data for a single ticker via Yahoo Finance v8 API
+ */
+async function fetchChart(ticker, daysBack = 60) {
+  const end = Math.floor(Date.now() / 1000);
+  const start = end - (daysBack * 86400);
+  const url = `${YAHOO_BASE}/v8/finance/chart/${encodeURIComponent(ticker)}?period1=${start}&period2=${end}&interval=1d`;
+
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+
+  if (!data.chart?.result?.[0]) return [];
+
+  const result = data.chart.result[0];
+  const timestamps = result.timestamp || [];
+  const quotes = result.indicators?.quote?.[0] || {};
+
+  const out = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    const close = quotes.close?.[i];
+    const open = quotes.open?.[i];
+    if (close != null && open != null) {
+      out.push({
+        date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
+        open, close,
+        high: quotes.high?.[i] || 0,
+        low: quotes.low?.[i] || 0,
+        volume: quotes.volume?.[i] || 0,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Fetch all tickers with rate limiting
  */
 export async function fetchQuotes(ticker, daysBack = 60) {
   try {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(start.getDate() - daysBack + 1);
-    start.setHours(0, 0, 0, 0);
-
-    const result = await yahooFinance.chart(ticker, {
-      period1: start,
-      period2: end,
-      interval: '1d',
-    });
-
-    if (!result || !result.quotes || result.quotes.length === 0) return [];
-
-    return result.quotes
-      .filter(q => q.close != null && q.open != null && q.date)
-      .map(q => ({
-        date: q.date.split('T')[0],
-        open: q.open,
-        high: q.high,
-        low: q.low,
-        close: q.close,
-        volume: q.volume || 0,
-      }));
+    return await fetchChart(ticker, daysBack);
   } catch (err) {
-    console.error(`Failed to fetch ${ticker}:`, err.message?.substring(0, 100));
+    console.error(`Failed to fetch ${ticker}:`, err.message?.substring(0, 120));
     return [];
   }
-}
-
-/**
- * Fetch all IHSG constituent tickers via ^JKSE components
- */
-export async function fetchConstituentTickers() {
-  try {
-    const result = await yahooFinance.quoteSummary('^JKSE', {
-      modules: ['defaultKeyStatistics'],
-    });
-    // Yahoo doesn't reliably return components list, so we rely on our known list
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Calculate A/D metrics from daily price data
- * @param {Array} quotes - sorted by date ascending
- * @returns {Array} daily A/D records
- */
-export function calculateAD(quotes) {
-  if (quotes.length < 2) return [];
-
-  const results = [];
-  for (let i = 1; i < quotes.length; i++) {
-    const prev = quotes[i - 1].close;
-    const curr = quotes[i].close;
-
-    if (curr > prev) results.push({ date: quotes[i].date, direction: 'advance' });
-    else if (curr < prev) results.push({ date: quotes[i].date, direction: 'decline' });
-    else results.push({ date: quotes[i].date, direction: 'unchanged' });
-  }
-  return results;
 }
 
 /**
@@ -95,10 +76,8 @@ export function aggregateAD(allTickersAD) {
     }
   }
 
-  // Sort by date
   const days = Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date));
 
-  // Calculate derived metrics
   let cumulativeAD = 0;
   const ema19 = { value: 0, alpha: 2 / 20 };
   const ema39 = { value: 0, alpha: 2 / 40 };
@@ -110,7 +89,6 @@ export function aggregateAD(allTickersAD) {
 
     const ratio = d.declines === 0 ? (d.advances === 0 ? 1 : 100) : parseFloat((d.advances / d.declines).toFixed(4));
 
-    // McClellan Oscillator: EMA(19) - EMA(39) of spread
     emaInit++;
     if (emaInit === 1) {
       ema19.value = spread;
