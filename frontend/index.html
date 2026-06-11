@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IHSG Advance/Decline Index</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="header-content">
+      <div class="logo">
+        <span class="logo-icon">📈</span>
+        <div>
+          <h1>IHSG A/D Index</h1>
+          <p class="subtitle">Market Breadth Analysis — Jakarta Composite Index</p>
+        </div>
+      </div>
+      <div class="header-meta">
+        <span id="last-updated" class="badge">Loading...</span>
+        <button id="refresh-btn" class="btn-refresh" title="Refresh data">
+          ↻ Refresh
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Summary Cards -->
+    <section class="cards" id="cards">
+      <div class="card card-advance">
+        <div class="card-label">Advances</div>
+        <div class="card-value" id="advances">—</div>
+      </div>
+      <div class="card card-decline">
+        <div class="card-label">Declines</div>
+        <div class="card-value" id="declines">—</div>
+      </div>
+      <div class="card card-unchanged">
+        <div class="card-label">Unchanged</div>
+        <div class="card-value" id="unchanged">—</div>
+      </div>
+      <div class="card card-ratio">
+        <div class="card-label">A/D Ratio</div>
+        <div class="card-value" id="ratio">—</div>
+      </div>
+      <div class="card card-spread">
+        <div class="card-label">Spread</div>
+        <div class="card-value" id="spread">—</div>
+      </div>
+      <div class="card card-mcclellan">
+        <div class="card-label">McClellan</div>
+        <div class="card-value" id="mcclellan">—</div>
+      </div>
+    </section>
+
+    <!-- Date selector -->
+    <section class="chart-controls">
+      <label for="range-select">Range:</label>
+      <select id="range-select">
+        <option value="7">1 Week</option>
+        <option value="30" selected>1 Month</option>
+        <option value="90">3 Months</option>
+        <option value="0">All</option>
+      </select>
+    </section>
+
+    <!-- Charts -->
+    <section class="chart-section">
+      <div class="chart-container">
+        <h2>A/D Line (Cumulative)</h2>
+        <canvas id="ad-line-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-container">
+        <h2>A/D Ratio (Daily)</h2>
+        <canvas id="ad-ratio-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-container">
+        <h2>McClellan Oscillator</h2>
+        <canvas id="mcclellan-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section">
+      <div class="chart-container">
+        <h2>Daily Advances vs Declines</h2>
+        <canvas id="advdec-chart"></canvas>
+      </div>
+    </section>
+
+    <!-- Data Table -->
+    <section class="table-section">
+      <h2>Historical Data</h2>
+      <div class="table-scroll">
+        <table id="data-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Adv</th>
+              <th>Dec</th>
+              <th>Unch</th>
+              <th>Spread</th>
+              <th>Ratio</th>
+              <th>A/D Line</th>
+              <th>McClellan</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Data from Yahoo Finance · Calculated daily after market close · finance.sulaksono.id</p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

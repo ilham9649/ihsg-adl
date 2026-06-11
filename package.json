@@ -1,0 +1,10 @@
+{
+  "name": "ihsg-adl",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "zip": "cd backend && npm ci && zip -r ../function.zip ."
+  },
+  "dependencies": {}
+}
