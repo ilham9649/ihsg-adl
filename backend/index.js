@@ -2,7 +2,7 @@
 // Lambda Handler (supports REST API v1 & HTTP API v2)
 // ──────────────────────────────────────────────
 
-import { KNOWN_TICKERS } from './lib/tickers.js';
+import { getAllTickers } from './lib/tickers.js';
 import { fetchQuotes, aggregateAD } from './scrapers/yahoo.js';
 import { getAllData, batchPutData } from './lib/db.js';
 
@@ -26,39 +26,58 @@ function getMethod(event) {
 }
 
 function getPath(event) {
-  // REST API v1: path includes stage (e.g. /prod/api/ad)
-  // HTTP API v2: rawPath (e.g. /api/ad)
   let p = event.rawPath || event.path || '';
-  // Strip stage prefix if present
   p = p.replace(/^\/[^/]+(\/api)/, '$1');
   return p;
 }
 
 async function refreshData() {
+  // Discover tickers dynamically
+  const tickers = await getAllTickers();
+  console.log(`Scraping ${tickers.length} tickers...`);
+
   const allAD = [];
   let successCount = 0;
   let failCount = 0;
 
-  for (const ticker of KNOWN_TICKERS) {
-    const quotes = await fetchQuotes(ticker, 90);
+  // Process in parallel batches of 3 with 2s delay between batches
+  const BATCH_SIZE = 3;
+  const BATCH_DELAY = 2000;
 
-    if (quotes.length > 1) {
-      const ad = [];
-      for (let i = 1; i < quotes.length; i++) {
-        const prev = quotes[i - 1].close;
-        const curr = quotes[i].close;
-        ad.push({
-          date: quotes[i].date,
-          direction: curr > prev ? 'advance' : curr < prev ? 'decline' : 'unchanged',
-        });
+  for (let i = 0; i < tickers.length; i += BATCH_SIZE) {
+    const batch = tickers.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(ticker => fetchQuotes(ticker, 90))
+    );
+
+    for (let j = 0; j < results.length; j++) {
+      const quotes = results[j];
+      if (quotes.length > 1) {
+        const ad = [];
+        for (let k = 1; k < quotes.length; k++) {
+          const prev = quotes[k - 1].close;
+          const curr = quotes[k].close;
+          ad.push({
+            date: quotes[k].date,
+            direction: curr > prev ? 'advance' : curr < prev ? 'decline' : 'unchanged',
+          });
+        }
+        allAD.push(ad);
+        successCount++;
+      } else {
+        failCount++;
       }
-      allAD.push(ad);
-      successCount++;
-    } else {
-      failCount++;
     }
 
-    await sleep(1200);
+    const progress = Math.min(i + BATCH_SIZE, tickers.length);
+    if (progress % 50 === 0 || progress === tickers.length) {
+      console.log(`Progress: ${progress}/${tickers.length} (${successCount} OK, ${failCount} fail)`);
+    }
+
+    // Delay between batches to avoid rate limiting
+    if (i + BATCH_SIZE < tickers.length) {
+      await sleep(BATCH_DELAY);
+    }
   }
 
   if (allAD.length === 0) {
