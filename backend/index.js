@@ -1,5 +1,5 @@
 // ──────────────────────────────────────────────
-// Lambda Handler
+// Lambda Handler (supports REST API v1 & HTTP API v2)
 // ──────────────────────────────────────────────
 
 import { KNOWN_TICKERS } from './lib/tickers.js';
@@ -21,12 +21,24 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
+function getMethod(event) {
+  return event.requestContext?.http?.method || event.httpMethod || '';
+}
+
+function getPath(event) {
+  // REST API v1: path includes stage (e.g. /prod/api/ad)
+  // HTTP API v2: rawPath (e.g. /api/ad)
+  let p = event.rawPath || event.path || '';
+  // Strip stage prefix if present
+  p = p.replace(/^\/[^/]+(\/api)/, '$1');
+  return p;
+}
+
 async function refreshData() {
   const allAD = [];
   let successCount = 0;
   let failCount = 0;
 
-  // Process tickers one at a time with delay to avoid rate limiting
   for (const ticker of KNOWN_TICKERS) {
     const quotes = await fetchQuotes(ticker, 90);
 
@@ -46,7 +58,6 @@ async function refreshData() {
       failCount++;
     }
 
-    // Rate limit: 1 request per second
     await sleep(1200);
   }
 
@@ -71,29 +82,30 @@ async function refreshData() {
 
 export const handler = async (event) => {
   try {
-    const { httpMethod, path, body } = event;
-
-    if (httpMethod === 'OPTIONS') {
-      return response(200, {});
-    }
-
-    if (httpMethod === 'GET' && (path === '/api/ad' || path === '/api/ad/')) {
-      const data = await getAllData();
-      return response(200, { success: true, count: data.length, data });
-    }
-
-    if (httpMethod === 'POST' && (path === '/api/ad/refresh' || path === '/api/ad/refresh/')) {
-      const result = await refreshData();
-      return response(200, result);
-    }
-
     if (event.source === 'aws.events') {
       console.log('Scheduled refresh triggered');
       const result = await refreshData();
       return { statusCode: 200, body: JSON.stringify(result) };
     }
 
-    return response(404, { error: 'Not found' });
+    const method = getMethod(event);
+    const path = getPath(event);
+
+    if (method === 'OPTIONS') {
+      return response(200, {});
+    }
+
+    if (method === 'GET' && (path === '/api/ad' || path === '/api/ad/')) {
+      const data = await getAllData();
+      return response(200, { success: true, count: data.length, data });
+    }
+
+    if (method === 'POST' && (path === '/api/ad/refresh' || path === '/api/ad/refresh/')) {
+      const result = await refreshData();
+      return response(200, result);
+    }
+
+    return response(404, { error: `Not found: ${method} ${path}` });
   } catch (err) {
     console.error('Handler error:', err);
     return response(500, { error: err.message });
