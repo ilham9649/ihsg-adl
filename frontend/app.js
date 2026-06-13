@@ -6,7 +6,8 @@ const API_BASE = window.location.origin;
 
 let allData = [];
 let charts = {};
-let breadthChart = null;
+let ihsgChart = null;
+let adlineChart = null;
 
 // ── Chart defaults ──
 Chart.defaults.color = '#8899aa';
@@ -126,13 +127,20 @@ function renderAll() {
   renderTable(data);
 }
 
-// ── IHSG + A/D Line two-panel chart ──
+// ── IHSG price + A/D Line (two separate charts) ──
 function renderBreadth(data) {
-  const canvas = document.getElementById('breadth-chart');
-  const tip = document.getElementById('breadth-tip');
-  if (!canvas || !tip) return;
-  if (!breadthChart) breadthChart = new BreadthChart(canvas, tip);
-  breadthChart.setData(data);
+  const pc = document.getElementById('ihsg-chart');
+  const pt = document.getElementById('ihsg-tip');
+  if (pc && pt) {
+    if (!ihsgChart) ihsgChart = new BreadthChart(pc, pt, { panel: 'price' });
+    ihsgChart.setData(data);
+  }
+  const ac = document.getElementById('adline-chart');
+  const at = document.getElementById('adline-tip');
+  if (ac && at) {
+    if (!adlineChart) adlineChart = new BreadthChart(ac, at, { panel: 'adline' });
+    adlineChart.setData(data);
+  }
 }
 
 // ── Cards ──

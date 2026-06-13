@@ -1,69 +1,37 @@
 // ──────────────────────────────────────────────
-// Ticker Discovery
-// Fetches all IDX tickers from stockanalysis.com
-// Falls back to built-in list if fetch fails
+// Breadth Universe — a STABLE, LIQUID set of large-cap IDX stocks (LQ45-style)
 // ──────────────────────────────────────────────
+// Using a stable, liquid universe — NOT the full ~900 IDX list — is essential for a
+// trustworthy cumulative A/D Line. The broad list includes many illiquid / suspended
+// small caps whose Yahoo data is forward-filled or stale, which injects phantom net
+// declines that compound monotonically. With the raw ~500-stock universe the A/D Line
+// declined ~16,000 over 3 years DURING a +28% IHSG rally — an artifact, not real
+// breadth. A stable liquid universe (like the S&P 500's) produces a line that
+// genuinely rises/falls with the market. Validated against the published
+// S&P 500 / NYSE A/D Line methodology (raw vs adjusted close + universe stability).
+//
+// Advancers are classified on the dividend/split-ADJUSTED close (see yahoo.js).
 
-// Core fallback list (LQ45 & liquid stocks)
-const FALLBACK_TICKERS = [
-  'BBCA','BBRI','BMRI','BBNI','TLKM','ASII','UNVR','HMSP','GOTO','TPIA',
-  'BRPT','EMTK','BRIS','ICBP','MDKA','ANTM','BREN','BSDE','ERAA','BUKA',
-  'BMTR','CTRA','AMRT','ACES','ADRO','AKRA','ARTO','BSSB','BTPS','CPIN',
-  'DEPO','EXCL','GGRM','INKP','INCO','INDF','INDS','INTD','ITMG',
-  'JSMR','KLBF','LPPF','MAPI','MASS','MBAP','MEDC','MEGA','MFIN','MIKA',
-  'MNCN','MPPA','PGAS','PGEO','PTBA','PTPP','PWON','SIDO','SMGR','TBIG',
-  'TINS','TOWR','UNTR','WIKA','WSKT','WTON',
+const LIQUID_TICKERS = [
+  // Banks & financials
+  'BBCA','BBRI','BMRI','BBNI','BRIS','BTPS',
+  // Consumer / staples / healthcare
+  'UNVR','ICBP','INDF','GGRM','HMSP','KLBF','SIDO','AMRT','CPIN','ACES','MAPI','LPPF','JPFA',
+  // Telco / media / towers
+  'TLKM','ISAT','EXCL','EMTK','TBIG','TOWR',
+  // Resources / energy / materials
+  'ADRO','ANTM','PTBA','ITMG','INCO','MDKA','INKP','UNTR','ASII','TPIA','AKRA','PGAS','MEDC','MBAP',
+  // Property / infrastructure
+  'BSDE','CTRA','PWON','SMRA','JSMR',
 ];
 
 /**
- * Discover all IDX tickers from stockanalysis.com
- */
-export async function discoverTickers() {
-  try {
-    const tickers = [];
-    for (let page = 1; page <= 3; page++) {
-      const url = page === 1
-        ? 'https://stockanalysis.com/list/indonesia-stock-exchange/'
-        : `https://stockanalysis.com/list/indonesia-stock-exchange/?p=${page}`;
-
-      const res = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-        signal: AbortSignal.timeout(15000),
-      });
-
-      if (!res.ok) break;
-
-      const html = await res.text();
-      const matches = html.matchAll(/href="\/quote\/idx\/([^/]+)\//g);
-      for (const m of matches) {
-        const ticker = m[1];
-        // IDX tickers are typically 3-6 alphanumeric characters
-        if (ticker.length >= 3 && ticker.length <= 6 && /^[A-Z0-9]+$/.test(ticker)) {
-          tickers.push(ticker);
-        }
-      }
-
-      // Small delay between pages
-      if (page < 3) await new Promise(r => setTimeout(r, 500));
-    }
-
-    const unique = [...new Set(tickers)];
-    console.log(`Discovered ${unique.length} tickers from stockanalysis.com`);
-    return unique.length > 100 ? unique : null; // Return null if too few (site might be blocked)
-  } catch (err) {
-    console.error('Ticker discovery failed:', err.message?.substring(0, 100));
-    return null;
-  }
-}
-
-/**
- * Get all tickers - discovered or fallback
+ * Breadth universe — always the stable liquid set (LQ45-style).
  */
 export async function getAllTickers() {
-  const discovered = await discoverTickers();
-  if (discovered) return discovered.map(t => t + '.JK');
-  console.log(`Using fallback: ${FALLBACK_TICKERS.length} tickers`);
-  return FALLBACK_TICKERS.map(t => t + '.JK');
+  return LIQUID_TICKERS.map(t => t + '.JK');
 }
 
+// Kept for backward compatibility / tests.
+const FALLBACK_TICKERS = LIQUID_TICKERS;
 export { FALLBACK_TICKERS };

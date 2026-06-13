@@ -33,8 +33,13 @@ function getPath(event) {
   return p;
 }
 
+// Always re-scrape the full history and recompute the entire series fresh.
+// This is cheap (~30s) because the breadth universe is a small, stable, liquid
+// set (~44 LQ45-style stocks), and it guarantees the whole A/D series is always
+// consistent with the current universe — no stale counts from prior runs.
+const DAYS_BACK = 1100; // ~3+ years of trading days
+
 async function refreshData() {
-  // Acquire lock to prevent concurrent refreshes
   const locked = await acquireRefreshLock();
   if (!locked) {
     return { success: false, message: 'Refresh already in progress', locked: true };
@@ -42,25 +47,15 @@ async function refreshData() {
 
   try {
     const tickers = await getAllTickers();
+    console.log(`Scraping ${tickers.length} tickers, ${DAYS_BACK} days back`);
 
-    // Existing per-day raw counts are the source of truth for history.
-    // We merge today's scrape into them and recompute the FULL cumulative
-    // series from the start, so the A/D Line can never drift/reset.
-    const existing = await getAllData();
-    // Full backfill (3+ yrs) on first run, or when the index (ihsg) data is missing
-    // (e.g. data written by an older schema). Otherwise just refresh the recent window.
-    const needsBackfill = existing.length === 0 || existing.some(d => d.ihsg == null);
-    const DAYS_BACK = (!needsBackfill && existing.length > 365) ? 120 : 1100;
-    console.log(`Scraping ${tickers.length} tickers, ${DAYS_BACK} days back (existing ${existing.length} days, backfill=${needsBackfill})`);
-
-    // Fetch the IHSG index (^JKSE) OHLC for the price panel.
+    // IHSG index (^JKSE) OHLC for the price panel.
     const indexBars = await fetchChart('^JKSE', DAYS_BACK);
     const indexMap = {};
     for (const b of indexBars) {
       indexMap[b.date] = { ihsgOpen: b.open, ihsgHigh: b.high, ihsgLow: b.low, ihsg: b.close };
     }
     console.log(`IHSG index bars: ${indexBars.length}`);
-
 
     const allAD = [];
     let successCount = 0;
@@ -71,9 +66,7 @@ async function refreshData() {
 
     for (let i = 0; i < tickers.length; i += BATCH_SIZE) {
       const batch = tickers.slice(i, i + BATCH_SIZE);
-      const results = await Promise.all(
-        batch.map(ticker => fetchQuotes(ticker, DAYS_BACK))
-      );
+      const results = await Promise.all(batch.map(ticker => fetchQuotes(ticker, DAYS_BACK)));
 
       for (const quotes of results) {
         const MIN_DATA_POINTS = 10;
@@ -96,12 +89,6 @@ async function refreshData() {
         }
       }
 
-      const progress = Math.min(i + BATCH_SIZE, tickers.length);
-      if (progress % 50 === 0 || progress === tickers.length) {
-        console.log(`Progress: ${progress}/${tickers.length} (${successCount} OK, ${failCount} fail)`);
-      }
-
-      // Delay between batches to avoid rate limiting
       if (i + BATCH_SIZE < tickers.length) {
         await sleep(BATCH_DELAY);
       }
@@ -111,39 +98,27 @@ async function refreshData() {
       return { success: false, message: 'No ticker data fetched', successCount: 0, failCount };
     }
 
-    // Merge fresh daily counts into existing history (fresh overwrites recent window)
+    // Recompute the FULL series from the fresh scrape (drops phantom days).
     const freshCounts = buildDailyCounts(allAD);
-    const merged = {};
-    for (const d of existing) {
-      merged[d.date] = { date: d.date, advances: d.advances, declines: d.declines, unchanged: d.unchanged };
-    }
-    for (const [date, counts] of Object.entries(freshCounts)) {
-      merged[date] = counts;
-    }
+    const series = computeSeries(Object.values(freshCounts));
 
-    // Recompute the full consistent series (drops phantom days, fixes cumulative chain)
-    const series = computeSeries(Object.values(merged));
-
-    // Attach IHSG index OHLC per date: prefer today's fresh fetch, fall back to
-    // previously stored values (for older dates outside the fetch window).
-    const existingByDate = {};
-    for (const d of existing) existingByDate[d.date] = d;
+    // Attach IHSG index OHLC per date.
     for (const row of series) {
-      const fresh = indexMap[row.date];
-      const old = existingByDate[row.date];
-      row.ihsg = fresh?.ihsg ?? old?.ihsg ?? null;
-      row.ihsgOpen = fresh?.ihsgOpen ?? old?.ihsgOpen ?? null;
-      row.ihsgHigh = fresh?.ihsgHigh ?? old?.ihsgHigh ?? null;
-      row.ihsgLow = fresh?.ihsgLow ?? old?.ihsgLow ?? null;
+      const idx = indexMap[row.date] || {};
+      row.ihsg = idx.ihsg ?? null;
+      row.ihsgOpen = idx.ihsgOpen ?? null;
+      row.ihsgHigh = idx.ihsgHigh ?? null;
+      row.ihsgLow = idx.ihsgLow ?? null;
     }
 
-    // Write the recomputed series and delete any stale dates no longer present
+    // Overwrite the series and delete any dates no longer present.
+    const existing = await getAllData();
     const seriesDates = new Set(series.map(d => d.date));
-    const staleDates = Object.keys(merged).filter(date => !seriesDates.has(date));
+    const staleDates = existing.map(d => d.date).filter(date => !seriesDates.has(date));
 
     await batchPutData(series);
     if (staleDates.length > 0) {
-      console.log(`Deleting ${staleDates.length} stale/phantom day(s): ${staleDates.join(', ')}`);
+      console.log(`Deleting ${staleDates.length} stale day(s): ${staleDates.join(', ')}`);
       await deleteDates(staleDates);
     }
 
