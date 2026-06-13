@@ -1,21 +1,33 @@
 // ──────────────────────────────────────────────
 // DynamoDB Helper
 // ──────────────────────────────────────────────
+// Table: ihsg-adl (or TABLE_NAME env var)
+// Partition Key: date (S) - required for idempotent writes
+// ──────────────────────────────────────────────
 
-import { DynamoDBClient, ScanCommand, PutItemCommand, BatchWriteItemCommand } from '@aws-sdk/client-dynamodb';
+import { DynamoDBClient, ScanCommand, PutItemCommand, BatchWriteItemCommand, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
 
 const client = new DynamoDBClient({});
 
 const TABLE_NAME = process.env.TABLE_NAME || 'ihsg-adl';
 
 export async function getAllData() {
-  const result = await client.send(new ScanCommand({
-    TableName: TABLE_NAME,
-    ProjectionExpression: '#d, advances, declines, unchanged, spread, #r, adLine, mcClellan',
-    ExpressionAttributeNames: { '#d': 'date', '#r': 'ratio' },
-  }));
+  const items = [];
+  let lastEvaluatedKey = undefined;
 
-  return (result.Items || [])
+  do {
+    const result = await client.send(new ScanCommand({
+      TableName: TABLE_NAME,
+      ProjectionExpression: '#d, advances, declines, unchanged, spread, #r, adLine, mcClellan',
+      ExpressionAttributeNames: { '#d': 'date', '#r': 'ratio' },
+      ExclusiveStartKey: lastEvaluatedKey,
+    }));
+
+    items.push(...(result.Items || []));
+    lastEvaluatedKey = result.LastEvaluatedKey;
+  } while (lastEvaluatedKey);
+
+  return items
     .map(item => ({
       date: item.date.S,
       advances: parseInt(item.advances.N, 10),
@@ -71,6 +83,42 @@ export async function putData(record) {
       adLine: { N: String(record.adLine) },
       mcClellan: { N: String(record.mcClellan) },
     },
+  }));
+}
+
+// ── Refresh Lock ──
+const LOCK_KEY = '_refresh_lock';
+const LOCK_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+export async function acquireRefreshLock() {
+  const now = Date.now();
+  try {
+    await client.send(new PutItemCommand({
+      TableName: TABLE_NAME,
+      Item: {
+        date: { S: LOCK_KEY },
+        lockedAt: { N: String(now) },
+        ttl: { N: String(now + LOCK_TTL_MS) },
+      },
+      ConditionExpression: 'attribute_not_exists(#d) OR #t < :now',
+      ExpressionAttributeNames: { '#d': 'date', '#t': 'lockedAt' },
+      ExpressionAttributeValues: {
+        ':now': { N: String(now - LOCK_TTL_MS) },
+      },
+    }));
+    return true;
+  } catch (err) {
+    if (err.name === 'ConditionalCheckFailedException') {
+      return false; // Lock already held
+    }
+    throw err;
+  }
+}
+
+export async function releaseRefreshLock() {
+  await client.send(new DeleteItemCommand({
+    TableName: TABLE_NAME,
+    Key: { date: { S: LOCK_KEY } },
   }));
 }
 

@@ -37,7 +37,8 @@ export async function discoverTickers() {
       const matches = html.matchAll(/href="\/quote\/idx\/([^/]+)\//g);
       for (const m of matches) {
         const ticker = m[1];
-        if (ticker.length >= 3 && ticker.length <= 5 && /^[A-Z0-9]+$/.test(ticker)) {
+        // IDX tickers are typically 3-6 alphanumeric characters
+        if (ticker.length >= 3 && ticker.length <= 6 && /^[A-Z0-9]+$/.test(ticker)) {
           tickers.push(ticker);
         }
       }

@@ -4,7 +4,7 @@
 
 import { getAllTickers } from './lib/tickers.js';
 import { fetchQuotes, aggregateAD } from './scrapers/yahoo.js';
-import { getAllData, batchPutData } from './lib/db.js';
+import { getAllData, batchPutData, acquireRefreshLock, releaseRefreshLock } from './lib/db.js';
 
 const HEADERS = {
   'Content-Type': 'application/json',
@@ -32,71 +32,82 @@ function getPath(event) {
 }
 
 async function refreshData() {
-  // Discover tickers dynamically
-  const tickers = await getAllTickers();
-  console.log(`Scraping ${tickers.length} tickers...`);
+  // Acquire lock to prevent concurrent refreshes
+  const locked = await acquireRefreshLock();
+  if (!locked) {
+    return { success: false, message: 'Refresh already in progress', locked: true };
+  }
 
-  const allAD = [];
-  let successCount = 0;
-  let failCount = 0;
+  try {
+    // Discover tickers dynamically
+    const tickers = await getAllTickers();
+    console.log(`Scraping ${tickers.length} tickers...`);
 
-  // Process in parallel batches of 3 with 2s delay between batches
-  const BATCH_SIZE = 3;
-  const BATCH_DELAY = 2000;
+    const allAD = [];
+    let successCount = 0;
+    let failCount = 0;
 
-  for (let i = 0; i < tickers.length; i += BATCH_SIZE) {
-    const batch = tickers.slice(i, i + BATCH_SIZE);
-    const results = await Promise.all(
-      batch.map(ticker => fetchQuotes(ticker, 90))
-    );
+    // Process in parallel batches of 3 with 2s delay between batches
+    const BATCH_SIZE = 3;
+    const BATCH_DELAY = 2000;
 
-    for (let j = 0; j < results.length; j++) {
-      const quotes = results[j];
-      if (quotes.length > 1) {
-        const ad = [];
-        for (let k = 1; k < quotes.length; k++) {
-          const prev = quotes[k - 1].close;
-          const curr = quotes[k].close;
-          ad.push({
-            date: quotes[k].date,
-            direction: curr > prev ? 'advance' : curr < prev ? 'decline' : 'unchanged',
-          });
+    for (let i = 0; i < tickers.length; i += BATCH_SIZE) {
+      const batch = tickers.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map(ticker => fetchQuotes(ticker, 90))
+      );
+
+      for (let j = 0; j < results.length; j++) {
+        const quotes = results[j];
+        const MIN_DATA_POINTS = 10;
+        if (quotes.length >= MIN_DATA_POINTS) {
+          const ad = [];
+          for (let k = 1; k < quotes.length; k++) {
+            const prev = quotes[k - 1].close;
+            const curr = quotes[k].close;
+            ad.push({
+              date: quotes[k].date,
+              direction: curr > prev ? 'advance' : curr < prev ? 'decline' : 'unchanged',
+            });
+          }
+          allAD.push(ad);
+          successCount++;
+        } else {
+          failCount++;
         }
-        allAD.push(ad);
-        successCount++;
-      } else {
-        failCount++;
+      }
+
+      const progress = Math.min(i + BATCH_SIZE, tickers.length);
+      if (progress % 50 === 0 || progress === tickers.length) {
+        console.log(`Progress: ${progress}/${tickers.length} (${successCount} OK, ${failCount} fail)`);
+      }
+
+      // Delay between batches to avoid rate limiting
+      if (i + BATCH_SIZE < tickers.length) {
+        await sleep(BATCH_DELAY);
       }
     }
 
-    const progress = Math.min(i + BATCH_SIZE, tickers.length);
-    if (progress % 50 === 0 || progress === tickers.length) {
-      console.log(`Progress: ${progress}/${tickers.length} (${successCount} OK, ${failCount} fail)`);
+    if (allAD.length === 0) {
+      return { success: false, message: 'No ticker data fetched', successCount: 0, failCount };
     }
 
-    // Delay between batches to avoid rate limiting
-    if (i + BATCH_SIZE < tickers.length) {
-      await sleep(BATCH_DELAY);
-    }
+    const aggregated = aggregateAD(allAD);
+    await batchPutData(aggregated);
+
+    console.log(`Refresh complete: ${successCount} OK, ${failCount} failed, ${aggregated.length} days`);
+
+    return {
+      success: true,
+      message: 'Refreshed A/D data',
+      tickersFetched: successCount,
+      tickersFailed: failCount,
+      daysStored: aggregated.length,
+      latestDate: aggregated[aggregated.length - 1]?.date,
+    };
+  } finally {
+    await releaseRefreshLock();
   }
-
-  if (allAD.length === 0) {
-    return { success: false, message: 'No ticker data fetched', successCount: 0, failCount };
-  }
-
-  const aggregated = aggregateAD(allAD);
-  await batchPutData(aggregated);
-
-  console.log(`Refresh complete: ${successCount} OK, ${failCount} failed, ${aggregated.length} days`);
-
-  return {
-    success: true,
-    message: 'Refreshed A/D data',
-    tickersFetched: successCount,
-    tickersFailed: failCount,
-    daysStored: aggregated.length,
-    latestDate: aggregated[aggregated.length - 1]?.date,
-  };
 }
 
 export const handler = async (event) => {

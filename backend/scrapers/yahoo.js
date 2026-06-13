@@ -79,8 +79,8 @@ export function aggregateAD(allTickersAD) {
   const days = Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date));
 
   let cumulativeAD = 0;
-  const ema19 = { value: 0, alpha: 2 / 20 };
-  const ema39 = { value: 0, alpha: 2 / 40 };
+  const ema19 = { value: 0, alpha: 2 / 20, sum: 0, count: 0 };
+  const ema39 = { value: 0, alpha: 2 / 40, sum: 0, count: 0 };
   let emaInit = 0;
 
   return days.map(d => {
@@ -90,13 +90,23 @@ export function aggregateAD(allTickersAD) {
     const ratio = d.declines === 0 ? (d.advances === 0 ? 1 : 100) : parseFloat((d.advances / d.declines).toFixed(4));
 
     emaInit++;
-    if (emaInit === 1) {
-      ema19.value = spread;
-      ema39.value = spread;
+    if (emaInit < 20) {
+      // Warmup period: use SMA
+      ema19.sum += spread;
+      ema19.count = emaInit;
+      ema19.value = ema19.sum / ema19.count;
     } else {
       ema19.value = spread * ema19.alpha + ema19.value * (1 - ema19.alpha);
+    }
+
+    if (emaInit < 40) {
+      ema39.sum += spread;
+      ema39.count = emaInit;
+      ema39.value = ema39.sum / ema39.count;
+    } else {
       ema39.value = spread * ema39.alpha + ema39.value * (1 - ema39.alpha);
     }
+
     const mcClellan = parseFloat((ema19.value - ema39.value).toFixed(2));
 
     return {

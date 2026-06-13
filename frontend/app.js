@@ -30,7 +30,13 @@ async function fetchData() {
     // Handle REST API v1 double-wrapped response
     let data = json;
     if (json.body && json.statusCode) {
-      try { data = JSON.parse(json.body); } catch(e) {}
+      try {
+        data = JSON.parse(json.body);
+      } catch (parseErr) {
+        console.error('Failed to parse wrapped response:', parseErr);
+        showEmpty('API response format error');
+        return;
+      }
     }
 
     if (data.success && data.data && data.data.length > 0) {
@@ -43,20 +49,29 @@ async function fetchData() {
   } catch (err) {
     console.error('Fetch error:', err);
     document.getElementById('last-updated').textContent = `Error: ${err.message}`;
-    // Show refresh prompt
-    document.querySelector('.cards').innerHTML = `
-      <div class="card" style="grid-column: 1 / -1;">
-        <div class="card-label">Error</div>
-        <div class="card-value" style="font-size: 0.85rem; color: #ef4444;">${err.message}</div>
-      </div>
-    `;
+    // Show refresh prompt using safe DOM methods
+    const cards = document.querySelector('.cards');
+    cards.innerHTML = '';
+    const errorCard = document.createElement('div');
+    errorCard.className = 'card';
+    errorCard.style.gridColumn = '1 / -1';
+    errorCard.innerHTML = '<div class="card-label">Error</div>';
+    const errorValue = document.createElement('div');
+    errorValue.className = 'card-value';
+    errorValue.style.fontSize = '0.85rem';
+    errorValue.style.color = '#ef4444';
+    errorValue.textContent = err.message;
+    errorCard.appendChild(errorValue);
+    cards.appendChild(errorCard);
   }
 }
 
 async function refreshData() {
   const btn = document.getElementById('refresh-btn');
+  const lastUpdated = document.getElementById('last-updated');
   btn.disabled = true;
   btn.textContent = 'Refreshing...';
+  lastUpdated.textContent = 'Refreshing data...';
 
   try {
     const res = await fetch(`${API_BASE}/api/ad/refresh`, { method: 'POST' });
@@ -64,15 +79,25 @@ async function refreshData() {
 
     if (json.success) {
       btn.textContent = '✓ Done';
+      lastUpdated.textContent = `Refreshed: ${json.latestDate || 'just now'}`;
       setTimeout(() => { btn.textContent = '↻ Refresh'; btn.disabled = false; }, 2000);
       // Re-fetch
       await fetchData();
     } else {
       btn.textContent = '✗ Failed';
-      setTimeout(() => { btn.textContent = '↻ Refresh'; btn.disabled = false; }, 2000);
+      const errorMsg = json.locked ? ' (refresh in progress)' : json.message || 'unknown error';
+      lastUpdated.textContent = `Failed:${errorMsg}`;
+      lastUpdated.style.color = '#ef4444';
+      setTimeout(() => {
+        btn.textContent = '↻ Refresh';
+        btn.disabled = false;
+        lastUpdated.style.color = '';
+      }, 5000);
     }
   } catch (err) {
     btn.textContent = '✗ Error';
+    document.getElementById('last-updated').textContent = `Error: ${err.message}`;
+    document.getElementById('last-updated').style.color = '#ef4444';
     setTimeout(() => { btn.textContent = '↻ Refresh'; btn.disabled = false; }, 2000);
   }
 }

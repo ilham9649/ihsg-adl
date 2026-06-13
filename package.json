@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "zip": "cd backend && npm ci && zip -r ../function.zip ."
+    "zip": "cd backend && npm ci && zip -r ../function.zip .",
+    "test": "node --test backend/test.js"
   },
   "dependencies": {}
 }

@@ -26,6 +26,7 @@ Infrastructure is managed in a separate repo: `ilham9649/infrastructure` (`terra
 ```bash
 cd backend
 npm ci                    # Install dependencies
+npm test                  # Run unit tests
 ```
 
 ### Frontend (Static files)
@@ -34,6 +35,7 @@ No build step — vanilla JS served directly to S3. Edit and deploy.
 ### Package Lambda for deployment
 ```bash
 npm run zip              # Creates function.zip at repo root
+npm test                 # Run unit tests (from root)
 ```
 
 Or manually:
