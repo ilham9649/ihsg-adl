@@ -6,10 +6,11 @@ Dashboard for tracking IHSG (Jakarta Composite Index) market breadth.
 
 ## Metrics
 
-- **A/D Line** — Cumulative advances minus declines
 - **A/D Ratio** — Daily advances / declines
 - **A/D Spread** — Daily advances minus declines
 - **McClellan Oscillator** — EMA(19) - EMA(39) of daily spread
+
+> **No cumulative A/D Line.** A running cumulative (advances − declines) was removed: computed from raw (unadjusted) closes, every ex-dividend day is miscounted as a "decline", producing a one-directional downward bias that compounds monotonically (it fell ~16,000 over 3 years *during* a +28% index rally — the opposite of a real A/D Line, which rises in bull markets). The non-cumulative metrics above are unaffected.
 
 ## Architecture
 

@@ -118,7 +118,6 @@ function getFilteredData() {
 function renderAll() {
   const data = getFilteredData();
   renderCards(data);
-  renderADLine(data);
   renderADRatio(data);
   renderMcClellan(data);
   renderAdvDec(data);
@@ -140,64 +139,6 @@ function renderCards(data) {
   // Color the spread & mcclellan cards
   document.getElementById('spread').style.color = latest.spread >= 0 ? '#22c55e' : '#ef4444';
   document.getElementById('mcclellan').style.color = latest.mcClellan >= 0 ? '#a855f7' : '#ef4444';
-}
-
-// ── A/D Line Chart ──
-function renderADLine(data) {
-  const ctx = document.getElementById('ad-line-chart').getContext('2d');
-  if (charts.adLine) charts.adLine.destroy();
-
-  const isPositive = data.length > 0 && data[data.length - 1].adLine >= 0;
-
-  charts.adLine = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: data.map(d => d.date),
-      datasets: [{
-        label: 'A/D Line',
-        data: data.map(d => d.adLine),
-        borderColor: isPositive ? '#22c55e' : '#ef4444',
-        backgroundColor: isPositive ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-        borderWidth: 2,
-        fill: true,
-        tension: 0.3,
-        pointRadius: data.length > 60 ? 0 : 2,
-        pointHoverRadius: 5,
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { intersect: false, mode: 'index' },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#16213e',
-          borderColor: 'rgba(201,169,110,0.3)',
-          borderWidth: 1,
-          callbacks: {
-            label: (ctx) => `A/D Line: ${ctx.parsed.y.toLocaleString()}`,
-          },
-        },
-      },
-      scales: {
-        x: {
-          grid: { display: false },
-          ticks: { maxTicksLimit: 8, maxRotation: 0 },
-        },
-        y: {
-          grid: { color: 'rgba(255,255,255,0.03)' },
-          ticks: {
-            callback: (v) => v.toLocaleString(),
-          },
-        },
-      },
-    },
-  });
-
-  // Set height
-  document.getElementById('ad-line-chart').parentElement.style.height = '350px';
-  charts.adLine.canvas.style.height = '100%';
 }
 
 // ── A/D Ratio Chart ──
@@ -387,7 +328,6 @@ function renderTable(data) {
       <td>${d.unchanged}</td>
       <td class="${d.spread >= 0 ? 'td-positive' : 'td-negative'}">${d.spread >= 0 ? '+' : ''}${d.spread}</td>
       <td>${d.ratio.toFixed(2)}</td>
-      <td>${d.adLine.toLocaleString()}</td>
       <td class="${d.mcClellan >= 0 ? 'td-positive' : 'td-negative'}">${d.mcClellan >= 0 ? '+' : ''}${d.mcClellan.toFixed(1)}</td>
     </tr>
   `).join('');

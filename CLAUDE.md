@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Serverless IHSG (Jakarta Composite Index) market breadth dashboard. Tracks ~500 IDX stocks daily, calculating A/D Line, A/D Ratio, Spread, and McClellan Oscillator.
+Serverless IHSG (Jakarta Composite Index) market breadth dashboard. Tracks ~500 IDX stocks daily, calculating A/D Ratio, Spread, and McClellan Oscillator.
+
+> **No cumulative A/D Line** — it was removed because, computed from raw (unadjusted) closes, ex-dividend days inject a systematic downward bias that compounds monotonically (it declined ~16,000 over 3 years during a +28% index rally — not how a real A/D Line behaves). Only non-cumulative metrics are shown. See `computeSeries` in `backend/scrapers/yahoo.js` for the rationale comment.
 
 **Live:** [finance.sulaksono.id](https://finance.sulaksono.id)
 

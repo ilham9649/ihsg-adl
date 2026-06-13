@@ -18,7 +18,7 @@ export async function getAllData() {
   do {
     const result = await client.send(new ScanCommand({
       TableName: TABLE_NAME,
-      ProjectionExpression: '#d, advances, declines, unchanged, spread, #r, adLine, mcClellan',
+      ProjectionExpression: '#d, advances, declines, unchanged, spread, #r, mcClellan',
       ExpressionAttributeNames: { '#d': 'date', '#r': 'ratio' },
       FilterExpression: '#d <> :lock',
       ExpressionAttributeValues: { ':lock': { S: LOCK_KEY } },
@@ -37,7 +37,6 @@ export async function getAllData() {
       unchanged: parseInt(item.unchanged.N, 10),
       spread: parseInt(item.spread.N, 10),
       ratio: parseFloat(item.ratio.N),
-      adLine: parseInt(item.adLine.N, 10),
       mcClellan: parseFloat(item.mcClellan.N),
     }))
     .filter(item => !isNaN(item.advances)) // Filter out any malformed items
@@ -61,7 +60,6 @@ export async function batchPutData(records) {
           unchanged: { N: String(r.unchanged) },
           spread: { N: String(r.spread) },
           ratio: { N: String(r.ratio) },
-          adLine: { N: String(r.adLine) },
           mcClellan: { N: String(r.mcClellan) },
         },
       },
@@ -83,7 +81,6 @@ export async function putData(record) {
       unchanged: { N: String(record.unchanged) },
       spread: { N: String(record.spread) },
       ratio: { N: String(record.ratio) },
-      adLine: { N: String(record.adLine) },
       mcClellan: { N: String(record.mcClellan) },
     },
   }));

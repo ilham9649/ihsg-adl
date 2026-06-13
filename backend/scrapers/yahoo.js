@@ -81,38 +81,41 @@ export function buildDailyCounts(allTickersAD) {
 }
 
 /**
- * Compute the FULL consistent A/D series from raw daily counts.
+ * Compute the daily breadth series from raw daily counts.
  *
  * Input: array of { date, advances, declines, unchanged } (any order).
- * Output: array sorted ascending by date, each with spread/ratio/adLine/mcClellan.
+ * Output: array sorted ascending by date, each with spread/ratio/mcClellan.
  *
- * Correctness guarantees (asserted in tests):
- *   - adLine[0] == spread[0]
- *   - adLine[i] == adLine[i-1] + spread[i]  for all i   (cumulative, never resets)
- *   - adLine[last] == sum of all spreads
- *   - non-trading days (advances+declines == 0) are dropped
+ * Non-trading days (advances+declines == 0) are dropped.
  *
- * This recomputes the ENTIRE series from the start each call, so the chain is
- * always internally consistent regardless of how days were collected. McClellan
- * EMA(19) - EMA(39) is seeded with an SMA over the first 19/39 days.
+ * NOTE: There is intentionally NO cumulative "A/D Line" here. A cumulative
+ * running sum of (advances - declines) computed from raw (unadjusted) closes is
+ * NOT a faithful breadth measure for IDX: every ex-dividend day drops the raw
+ * close and is miscounted as a "decline", injecting a one-directional downward
+ * bias that compounds monotonically (observed ~-16,000 over 3 years during a
+ * +28% index rally). Real A/D Lines rise in bull markets; this one only fell —
+ * an artifact, so it was removed. The non-cumulative metrics below (spread,
+ * ratio, McClellan) are unaffected. See git history for the removed logic.
+ *
+ * McClellan = EMA(19) - EMA(39) of the daily spread, seeded with an SMA over the
+ * first 19/39 days. McClellan is EMA-smoothed (not a raw cumulative sum), so it
+ * does not suffer the monotonic drift.
  */
 export function computeSeries(dailyCounts) {
   // Drop phantom / non-trading days: a real session with a few hundred liquid
   // stocks cannot have zero advances AND zero declines. These rows come from
   // holidays (Yahoo forward-fills the prior close → all "unchanged") or
-  // near-empty scrapes. Keeping them would inject spread=0 and break comparisons.
+  // near-empty scrapes. Keeping them would inject spread=0 and distort the EMAs.
   const days = dailyCounts
     .filter(d => (d.advances + d.declines) > 0)
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  let cumulativeAD = 0;
   const ema19 = { value: 0, alpha: 2 / 20, sum: 0 };
   const ema39 = { value: 0, alpha: 2 / 40, sum: 0 };
   let n = 0;
 
   return days.map(d => {
     const spread = d.advances - d.declines;
-    cumulativeAD += spread;
 
     const ratio = d.declines === 0
       ? (d.advances === 0 ? 1 : 100)
@@ -143,7 +146,6 @@ export function computeSeries(dailyCounts) {
       unchanged: d.unchanged,
       spread,
       ratio,
-      adLine: cumulativeAD,
       mcClellan,
     };
   });
