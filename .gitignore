@@ -2,3 +2,7 @@ node_modules/
 function.zip
 .env
 .DS_Store
+
+# Local dev/browser-test artifacts
+.playwright-mcp/
+finance-dashboard*.png
