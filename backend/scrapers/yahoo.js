@@ -61,8 +61,12 @@ export async function fetchQuotes(ticker, daysBack = 60) {
 
 /**
  * Aggregate A/D across all tickers for each trading day
+ * @param {Array} allTickersAD - Array of ticker A/D data
+ * @param {Object} options - Options { startingADL: number, startingDate: string, emaState: object }
  */
-export function aggregateAD(allTickersAD) {
+export function aggregateAD(allTickersAD, options = {}) {
+  const { startingADL = 0, startingDate = null, emaState = null } = options;
+
   const dayMap = {};
 
   for (const tickerAD of allTickersAD) {
@@ -78,10 +82,10 @@ export function aggregateAD(allTickersAD) {
 
   const days = Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date));
 
-  let cumulativeAD = 0;
-  const ema19 = { value: 0, alpha: 2 / 20, sum: 0, count: 0 };
-  const ema39 = { value: 0, alpha: 2 / 40, sum: 0, count: 0 };
-  let emaInit = 0;
+  let cumulativeAD = startingADL;
+  const ema19 = emaState?.ema19 || { value: 0, alpha: 2 / 20, sum: 0, count: 0 };
+  const ema39 = emaState?.ema39 || { value: 0, alpha: 2 / 40, sum: 0, count: 0 };
+  let emaInit = emaState?.emaInit || 0;
 
   return days.map(d => {
     const spread = d.advances - d.declines;

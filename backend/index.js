@@ -43,6 +43,12 @@ async function refreshData() {
     const tickers = await getAllTickers();
     console.log(`Scraping ${tickers.length} tickers...`);
 
+    // Get existing data to find the last date (for incremental updates)
+    const existingData = await getAllData();
+    const lastDate = existingData.length > 0 ? existingData[existingData.length - 1].date : null;
+    const lastADL = existingData.length > 0 ? existingData[existingData.length - 1].adLine : 0;
+    console.log(`Existing data: ${existingData.length} days, last date: ${lastDate}, last ADL: ${lastADL}`);
+
     const allAD = [];
     let successCount = 0;
     let failCount = 0;
@@ -50,11 +56,13 @@ async function refreshData() {
     // Process in parallel batches of 3 with 2s delay between batches
     const BATCH_SIZE = 3;
     const BATCH_DELAY = 2000;
+    // Fetch enough data to ensure we have 3+ years on first run, or recent data for updates
+    const DAYS_BACK = existingData.length > 365 ? 120 : 1100;
 
     for (let i = 0; i < tickers.length; i += BATCH_SIZE) {
       const batch = tickers.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(
-        batch.map(ticker => fetchQuotes(ticker, 90))
+        batch.map(ticker => fetchQuotes(ticker, DAYS_BACK))
       );
 
       for (let j = 0; j < results.length; j++) {
@@ -63,15 +71,21 @@ async function refreshData() {
         if (quotes.length >= MIN_DATA_POINTS) {
           const ad = [];
           for (let k = 1; k < quotes.length; k++) {
-            const prev = quotes[k - 1].close;
-            const curr = quotes[k].close;
-            ad.push({
-              date: quotes[k].date,
-              direction: curr > prev ? 'advance' : curr < prev ? 'decline' : 'unchanged',
-            });
+            const quoteDate = quotes[k].date;
+            // Only include dates newer than the last date we have
+            if (!lastDate || quoteDate > lastDate) {
+              const prev = quotes[k - 1].close;
+              const curr = quotes[k].close;
+              ad.push({
+                date: quoteDate,
+                direction: curr > prev ? 'advance' : curr < prev ? 'decline' : 'unchanged',
+              });
+            }
           }
-          allAD.push(ad);
-          successCount++;
+          if (ad.length > 0) {
+            allAD.push(ad);
+            successCount++;
+          }
         } else {
           failCount++;
         }
@@ -88,14 +102,22 @@ async function refreshData() {
       }
     }
 
+    if (allAD.length === 0 && existingData.length > 0) {
+      return { success: true, message: 'No new data to add', tickersFetched: successCount, tickersFailed: failCount, daysStored: 0 };
+    }
+
     if (allAD.length === 0) {
       return { success: false, message: 'No ticker data fetched', successCount: 0, failCount };
     }
 
-    const aggregated = aggregateAD(allAD);
+    // Aggregate with continuation from last ADL value (for cumulative ADL)
+    const aggregated = aggregateAD(allAD, {
+      startingADL: lastADL,
+      startingDate: lastDate,
+    });
     await batchPutData(aggregated);
 
-    console.log(`Refresh complete: ${successCount} OK, ${failCount} failed, ${aggregated.length} days`);
+    console.log(`Refresh complete: ${successCount} OK, ${failCount} failed, ${aggregated.length} new days`);
 
     return {
       success: true,
