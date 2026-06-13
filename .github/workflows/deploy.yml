@@ -33,14 +33,14 @@ jobs:
             --cache-control "no-cache,max-age=0"
 
       - name: Invalidate CloudFront
+        # Distribution ID for finance.sulaksono.id. Inlined as a literal (not a
+        # variable) to avoid GitHub Actions injection surface. ListDistributions
+        # is intentionally not used: it can't be granted per-distribution, so the
+        # CI user is scoped only to cloudfront:CreateInvalidation on this ARN.
         run: |
-          DISTRIBUTION_ID=$(aws cloudfront list-distributions \
-            --region us-east-1 \
-            --query "DistributionList.Items[?Aliases.Items[0]=='finance.sulaksono.id'].Id" \
-            --output text)
           aws cloudfront create-invalidation \
             --region us-east-1 \
-            --distribution-id $DISTRIBUTION_ID \
+            --distribution-id E3FUF9L36MKNR \
             --paths "/*"
 
   deploy-backend:
