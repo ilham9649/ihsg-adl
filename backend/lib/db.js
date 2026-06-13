@@ -20,6 +20,8 @@ export async function getAllData() {
       TableName: TABLE_NAME,
       ProjectionExpression: '#d, advances, declines, unchanged, spread, #r, adLine, mcClellan',
       ExpressionAttributeNames: { '#d': 'date', '#r': 'ratio' },
+      FilterExpression: '#d <> :lock',
+      ExpressionAttributeValues: { ':lock': { S: LOCK_KEY } },
       ExclusiveStartKey: lastEvaluatedKey,
     }));
 
@@ -38,6 +40,7 @@ export async function getAllData() {
       adLine: parseInt(item.adLine.N, 10),
       mcClellan: parseFloat(item.mcClellan.N),
     }))
+    .filter(item => !isNaN(item.advances)) // Filter out any malformed items
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
