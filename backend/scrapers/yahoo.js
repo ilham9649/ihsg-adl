@@ -21,6 +21,7 @@ export async function fetchChart(ticker, daysBack = 60) {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     },
+    signal: AbortSignal.timeout(15000), // never let one stalled Yahoo call hang the Lambda
   });
 
   if (!res.ok) {
