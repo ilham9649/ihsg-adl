@@ -23,7 +23,9 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── Fetch ──
 async function fetchData() {
   try {
-    const url = `${API_BASE}/api/ad`;
+    // Cache-buster: CloudFront otherwise caches /api/ad and the dashboard
+    // shows stale data after a refresh.
+    const url = `${API_BASE}/api/ad?_=${Date.now()}`;
     const res = await fetch(url);
     const json = await res.json();
 

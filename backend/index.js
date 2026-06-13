@@ -11,6 +11,8 @@ const HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type',
   'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+  // API responses are dynamic — never let CloudFront/CDNs cache them.
+  'Cache-Control': 'no-store',
 };
 
 function response(status, body) {
