@@ -60,13 +60,10 @@ export async function fetchQuotes(ticker, daysBack = 60) {
 }
 
 /**
- * Aggregate A/D across all tickers for each trading day
- * @param {Array} allTickersAD - Array of ticker A/D data
- * @param {Object} options - Options { startingADL: number, startingDate: string, emaState: object }
+ * Build per-day advance/decline/unchanged counts from per-ticker direction arrays.
+ * Returns a map: { 'YYYY-MM-DD': { date, advances, declines, unchanged } }.
  */
-export function aggregateAD(allTickersAD, options = {}) {
-  const { startingADL = 0, startingDate = null, emaState = null } = options;
-
+export function buildDailyCounts(allTickersAD) {
   const dayMap = {};
 
   for (const tickerAD of allTickersAD) {
@@ -80,36 +77,62 @@ export function aggregateAD(allTickersAD, options = {}) {
     }
   }
 
-  const days = Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date));
+  return dayMap;
+}
 
-  let cumulativeAD = startingADL;
-  const ema19 = emaState?.ema19 || { value: 0, alpha: 2 / 20, sum: 0, count: 0 };
-  const ema39 = emaState?.ema39 || { value: 0, alpha: 2 / 40, sum: 0, count: 0 };
-  let emaInit = emaState?.emaInit || 0;
+/**
+ * Compute the FULL consistent A/D series from raw daily counts.
+ *
+ * Input: array of { date, advances, declines, unchanged } (any order).
+ * Output: array sorted ascending by date, each with spread/ratio/adLine/mcClellan.
+ *
+ * Correctness guarantees (asserted in tests):
+ *   - adLine[0] == spread[0]
+ *   - adLine[i] == adLine[i-1] + spread[i]  for all i   (cumulative, never resets)
+ *   - adLine[last] == sum of all spreads
+ *   - non-trading days (advances+declines == 0) are dropped
+ *
+ * This recomputes the ENTIRE series from the start each call, so the chain is
+ * always internally consistent regardless of how days were collected. McClellan
+ * EMA(19) - EMA(39) is seeded with an SMA over the first 19/39 days.
+ */
+export function computeSeries(dailyCounts) {
+  // Drop phantom / non-trading days: a real session with a few hundred liquid
+  // stocks cannot have zero advances AND zero declines. These rows come from
+  // holidays (Yahoo forward-fills the prior close → all "unchanged") or
+  // near-empty scrapes. Keeping them would inject spread=0 and break comparisons.
+  const days = dailyCounts
+    .filter(d => (d.advances + d.declines) > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  let cumulativeAD = 0;
+  const ema19 = { value: 0, alpha: 2 / 20, sum: 0 };
+  const ema39 = { value: 0, alpha: 2 / 40, sum: 0 };
+  let n = 0;
 
   return days.map(d => {
     const spread = d.advances - d.declines;
     cumulativeAD += spread;
 
-    const ratio = d.declines === 0 ? (d.advances === 0 ? 1 : 100) : parseFloat((d.advances / d.declines).toFixed(4));
+    const ratio = d.declines === 0
+      ? (d.advances === 0 ? 1 : 100)
+      : parseFloat((d.advances / d.declines).toFixed(4));
 
-    emaInit++;
-    if (emaInit < 20) {
-      // Warmup period: use SMA
-      ema19.sum += spread;
-      ema19.count = emaInit;
-      ema19.value = ema19.sum / ema19.count;
-    } else {
-      ema19.value = spread * ema19.alpha + ema19.value * (1 - ema19.alpha);
-    }
+    // McClellan: SMA seed for the first 19 (ema19) / 39 (ema39) days, then EMA.
+    n++;
+    ema19.sum += spread;
+    ema19.value = n < 19
+      ? ema19.sum / n                       // partial warmup
+      : n === 19
+        ? ema19.sum / 19                    // SMA seed
+        : spread * ema19.alpha + ema19.value * (1 - ema19.alpha);
 
-    if (emaInit < 40) {
-      ema39.sum += spread;
-      ema39.count = emaInit;
-      ema39.value = ema39.sum / ema39.count;
-    } else {
-      ema39.value = spread * ema39.alpha + ema39.value * (1 - ema39.alpha);
-    }
+    ema39.sum += spread;
+    ema39.value = n < 39
+      ? ema39.sum / n
+      : n === 39
+        ? ema39.sum / 39
+        : spread * ema39.alpha + ema39.value * (1 - ema39.alpha);
 
     const mcClellan = parseFloat((ema19.value - ema39.value).toFixed(2));
 

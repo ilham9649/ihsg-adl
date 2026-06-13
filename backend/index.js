@@ -3,8 +3,8 @@
 // ──────────────────────────────────────────────
 
 import { getAllTickers } from './lib/tickers.js';
-import { fetchQuotes, aggregateAD } from './scrapers/yahoo.js';
-import { getAllData, batchPutData, acquireRefreshLock, releaseRefreshLock } from './lib/db.js';
+import { fetchQuotes, buildDailyCounts, computeSeries } from './scrapers/yahoo.js';
+import { getAllData, batchPutData, deleteDates, acquireRefreshLock, releaseRefreshLock } from './lib/db.js';
 
 const HEADERS = {
   'Content-Type': 'application/json',
@@ -39,25 +39,21 @@ async function refreshData() {
   }
 
   try {
-    // Discover tickers dynamically
     const tickers = await getAllTickers();
-    console.log(`Scraping ${tickers.length} tickers...`);
 
-    // Get existing data to find the last date (for incremental updates)
-    const existingData = await getAllData();
-    const lastDate = existingData.length > 0 ? existingData[existingData.length - 1].date : null;
-    const lastADL = existingData.length > 0 ? existingData[existingData.length - 1].adLine : 0;
-    console.log(`Existing data: ${existingData.length} days, last date: ${lastDate}, last ADL: ${lastADL}`);
+    // Existing per-day raw counts are the source of truth for history.
+    // We merge today's scrape into them and recompute the FULL cumulative
+    // series from the start, so the A/D Line can never drift/reset.
+    const existing = await getAllData();
+    const DAYS_BACK = existing.length > 365 ? 120 : 1100; // seed 3+ yrs once, then recent
+    console.log(`Scraping ${tickers.length} tickers, ${DAYS_BACK} days back (existing ${existing.length} days)`);
 
     const allAD = [];
     let successCount = 0;
     let failCount = 0;
 
-    // Process in parallel batches of 3 with 2s delay between batches
     const BATCH_SIZE = 3;
     const BATCH_DELAY = 2000;
-    // Fetch enough data to ensure we have 3+ years on first run, or recent data for updates
-    const DAYS_BACK = existingData.length > 365 ? 120 : 1100;
 
     for (let i = 0; i < tickers.length; i += BATCH_SIZE) {
       const batch = tickers.slice(i, i + BATCH_SIZE);
@@ -65,27 +61,20 @@ async function refreshData() {
         batch.map(ticker => fetchQuotes(ticker, DAYS_BACK))
       );
 
-      for (let j = 0; j < results.length; j++) {
-        const quotes = results[j];
+      for (const quotes of results) {
         const MIN_DATA_POINTS = 10;
         if (quotes.length >= MIN_DATA_POINTS) {
           const ad = [];
           for (let k = 1; k < quotes.length; k++) {
-            const quoteDate = quotes[k].date;
-            // Only include dates newer than the last date we have
-            if (!lastDate || quoteDate > lastDate) {
-              const prev = quotes[k - 1].close;
-              const curr = quotes[k].close;
-              ad.push({
-                date: quoteDate,
-                direction: curr > prev ? 'advance' : curr < prev ? 'decline' : 'unchanged',
-              });
-            }
+            const prev = quotes[k - 1].close;
+            const curr = quotes[k].close;
+            ad.push({
+              date: quotes[k].date,
+              direction: curr > prev ? 'advance' : curr < prev ? 'decline' : 'unchanged',
+            });
           }
-          if (ad.length > 0) {
-            allAD.push(ad);
-            successCount++;
-          }
+          allAD.push(ad);
+          successCount++;
         } else {
           failCount++;
         }
@@ -102,30 +91,43 @@ async function refreshData() {
       }
     }
 
-    if (allAD.length === 0 && existingData.length > 0) {
-      return { success: true, message: 'No new data to add', tickersFetched: successCount, tickersFailed: failCount, daysStored: 0 };
-    }
-
     if (allAD.length === 0) {
       return { success: false, message: 'No ticker data fetched', successCount: 0, failCount };
     }
 
-    // Aggregate with continuation from last ADL value (for cumulative ADL)
-    const aggregated = aggregateAD(allAD, {
-      startingADL: lastADL,
-      startingDate: lastDate,
-    });
-    await batchPutData(aggregated);
+    // Merge fresh daily counts into existing history (fresh overwrites recent window)
+    const freshCounts = buildDailyCounts(allAD);
+    const merged = {};
+    for (const d of existing) {
+      merged[d.date] = { date: d.date, advances: d.advances, declines: d.declines, unchanged: d.unchanged };
+    }
+    for (const [date, counts] of Object.entries(freshCounts)) {
+      merged[date] = counts;
+    }
 
-    console.log(`Refresh complete: ${successCount} OK, ${failCount} failed, ${aggregated.length} new days`);
+    // Recompute the full consistent series (drops phantom days, fixes cumulative chain)
+    const series = computeSeries(Object.values(merged));
+
+    // Write the recomputed series and delete any stale dates no longer present
+    const seriesDates = new Set(series.map(d => d.date));
+    const staleDates = Object.keys(merged).filter(date => !seriesDates.has(date));
+
+    await batchPutData(series);
+    if (staleDates.length > 0) {
+      console.log(`Deleting ${staleDates.length} stale/phantom day(s): ${staleDates.join(', ')}`);
+      await deleteDates(staleDates);
+    }
+
+    console.log(`Refresh complete: ${successCount} OK, ${failCount} failed, ${series.length} days stored`);
 
     return {
       success: true,
       message: 'Refreshed A/D data',
       tickersFetched: successCount,
       tickersFailed: failCount,
-      daysStored: aggregated.length,
-      latestDate: aggregated[aggregated.length - 1]?.date,
+      daysStored: series.length,
+      daysDropped: staleDates.length,
+      latestDate: series[series.length - 1]?.date,
     };
   } finally {
     await releaseRefreshLock();

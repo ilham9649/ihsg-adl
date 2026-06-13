@@ -89,6 +89,23 @@ export async function putData(record) {
   }));
 }
 
+/**
+ * Delete rows for the given dates (e.g. dropped phantom/holiday days).
+ * Uses BatchWriteItem (DeleteRequest), max 25 per batch.
+ */
+export async function deleteDates(dates) {
+  const list = dates.filter(Boolean);
+  for (let i = 0; i < list.length; i += 25) {
+    const chunk = list.slice(i, i + 25);
+    const deleteRequests = chunk.map(date => ({
+      DeleteRequest: { Key: { date: { S: date } } },
+    }));
+    await client.send(new BatchWriteItemCommand({
+      RequestItems: { [TABLE_NAME]: deleteRequests },
+    }));
+  }
+}
+
 // ── Refresh Lock ──
 const LOCK_KEY = '_refresh_lock';
 const LOCK_TTL_MS = 30 * 60 * 1000; // 30 minutes
