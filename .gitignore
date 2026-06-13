@@ -6,3 +6,7 @@ function.zip
 # Local dev/browser-test artifacts
 .playwright-mcp/
 finance-dashboard*.png
+
+# Test screenshots
+breadth-chart*.png
+*.screenshot.png
