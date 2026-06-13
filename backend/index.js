@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 
 import { getAllTickers } from './lib/tickers.js';
-import { fetchQuotes, buildDailyCounts, computeSeries } from './scrapers/yahoo.js';
+import { fetchChart, fetchQuotes, buildDailyCounts, computeSeries } from './scrapers/yahoo.js';
 import { getAllData, batchPutData, deleteDates, acquireRefreshLock, releaseRefreshLock } from './lib/db.js';
 
 const HEADERS = {
@@ -50,6 +50,15 @@ async function refreshData() {
     const DAYS_BACK = existing.length > 365 ? 120 : 1100; // seed 3+ yrs once, then recent
     console.log(`Scraping ${tickers.length} tickers, ${DAYS_BACK} days back (existing ${existing.length} days)`);
 
+    // Fetch the IHSG index (^JKSE) OHLC for the price panel.
+    const indexBars = await fetchChart('^JKSE', DAYS_BACK);
+    const indexMap = {};
+    for (const b of indexBars) {
+      indexMap[b.date] = { ihsgOpen: b.open, ihsgHigh: b.high, ihsgLow: b.low, ihsg: b.close };
+    }
+    console.log(`IHSG index bars: ${indexBars.length}`);
+
+
     const allAD = [];
     let successCount = 0;
     let failCount = 0;
@@ -68,8 +77,10 @@ async function refreshData() {
         if (quotes.length >= MIN_DATA_POINTS) {
           const ad = [];
           for (let k = 1; k < quotes.length; k++) {
-            const prev = quotes[k - 1].close;
-            const curr = quotes[k].close;
+            // Classify on ADJUSTED close so ex-dividend days are not miscounted
+            // as declines (the root cause of the old A/D Line's downward drift).
+            const prev = quotes[k - 1].adjClose;
+            const curr = quotes[k].adjClose;
             ad.push({
               date: quotes[k].date,
               direction: curr > prev ? 'advance' : curr < prev ? 'decline' : 'unchanged',
@@ -109,6 +120,19 @@ async function refreshData() {
 
     // Recompute the full consistent series (drops phantom days, fixes cumulative chain)
     const series = computeSeries(Object.values(merged));
+
+    // Attach IHSG index OHLC per date: prefer today's fresh fetch, fall back to
+    // previously stored values (for older dates outside the fetch window).
+    const existingByDate = {};
+    for (const d of existing) existingByDate[d.date] = d;
+    for (const row of series) {
+      const fresh = indexMap[row.date];
+      const old = existingByDate[row.date];
+      row.ihsg = fresh?.ihsg ?? old?.ihsg ?? null;
+      row.ihsgOpen = fresh?.ihsgOpen ?? old?.ihsgOpen ?? null;
+      row.ihsgHigh = fresh?.ihsgHigh ?? old?.ihsgHigh ?? null;
+      row.ihsgLow = fresh?.ihsgLow ?? old?.ihsgLow ?? null;
+    }
 
     // Write the recomputed series and delete any stale dates no longer present
     const seriesDates = new Set(series.map(d => d.date));

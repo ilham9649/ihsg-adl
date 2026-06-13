@@ -5,9 +5,14 @@
 const YAHOO_BASE = 'https://query1.finance.yahoo.com';
 
 /**
- * Fetch historical chart data for a single ticker via Yahoo Finance v8 API
+ * Fetch historical chart data for a single ticker via Yahoo Finance v8 API.
+ * Returns BOTH raw and dividend/split-adjusted closes. Breadth classification
+ * MUST use adjClose: the raw close drops on ex-dividend days (counted as a
+ * spurious "decline"), which injects a systematic downward bias that compounds
+ * in any cumulative A/D Line. The adjusted series is continuous across ex-div
+ * dates. (Verified: BBRI ex-div 2024-03-14 raw −3.91% vs adjusted −0.24%.)
  */
-async function fetchChart(ticker, daysBack = 60) {
+export async function fetchChart(ticker, daysBack = 60) {
   const end = Math.floor(Date.now() / 1000);
   const start = end - (daysBack * 86400);
   const url = `${YAHOO_BASE}/v8/finance/chart/${encodeURIComponent(ticker)}?period1=${start}&period2=${end}&interval=1d`;
@@ -29,6 +34,7 @@ async function fetchChart(ticker, daysBack = 60) {
   const result = data.chart.result[0];
   const timestamps = result.timestamp || [];
   const quotes = result.indicators?.quote?.[0] || {};
+  const adj = result.indicators?.adjclose?.[0]?.adjclose || {};
 
   const out = [];
   for (let i = 0; i < timestamps.length; i++) {
@@ -38,6 +44,7 @@ async function fetchChart(ticker, daysBack = 60) {
       out.push({
         date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
         open, close,
+        adjClose: adj[i] != null ? adj[i] : close, // fall back to raw if missing
         high: quotes.high?.[i] || 0,
         low: quotes.low?.[i] || 0,
         volume: quotes.volume?.[i] || 0,
@@ -84,22 +91,18 @@ export function buildDailyCounts(allTickersAD) {
  * Compute the daily breadth series from raw daily counts.
  *
  * Input: array of { date, advances, declines, unchanged } (any order).
- * Output: array sorted ascending by date, each with spread/ratio/mcClellan.
+ * Output: array sorted ascending by date, each with spread/ratio/adLine/mcClellan.
  *
  * Non-trading days (advances+declines == 0) are dropped.
  *
- * NOTE: There is intentionally NO cumulative "A/D Line" here. A cumulative
- * running sum of (advances - declines) computed from raw (unadjusted) closes is
- * NOT a faithful breadth measure for IDX: every ex-dividend day drops the raw
- * close and is miscounted as a "decline", injecting a one-directional downward
- * bias that compounds monotonically (observed ~-16,000 over 3 years during a
- * +28% index rally). Real A/D Lines rise in bull markets; this one only fell —
- * an artifact, so it was removed. The non-cumulative metrics below (spread,
- * ratio, McClellan) are unaffected. See git history for the removed logic.
+ * The cumulative A/D Line (adLine) is a running sum of (advances - declines).
+ * It is GENUINE here because the caller classifies advances/declines from
+ * dividend-adjusted closes (see fetchChart), so ex-dividend days are not
+ * miscounted as declines — the line rises with a rising market like a real
+ * A/D Line, instead of drifting monotonically down.
  *
  * McClellan = EMA(19) - EMA(39) of the daily spread, seeded with an SMA over the
- * first 19/39 days. McClellan is EMA-smoothed (not a raw cumulative sum), so it
- * does not suffer the monotonic drift.
+ * first 19/39 days.
  */
 export function computeSeries(dailyCounts) {
   // Drop phantom / non-trading days: a real session with a few hundred liquid
@@ -110,12 +113,14 @@ export function computeSeries(dailyCounts) {
     .filter(d => (d.advances + d.declines) > 0)
     .sort((a, b) => a.date.localeCompare(b.date));
 
+  let cumulativeAD = 0;
   const ema19 = { value: 0, alpha: 2 / 20, sum: 0 };
   const ema39 = { value: 0, alpha: 2 / 40, sum: 0 };
   let n = 0;
 
   return days.map(d => {
     const spread = d.advances - d.declines;
+    cumulativeAD += spread;
 
     const ratio = d.declines === 0
       ? (d.advances === 0 ? 1 : 100)
@@ -146,6 +151,7 @@ export function computeSeries(dailyCounts) {
       unchanged: d.unchanged,
       spread,
       ratio,
+      adLine: cumulativeAD,
       mcClellan,
     };
   });

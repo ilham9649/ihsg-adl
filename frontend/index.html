@@ -70,6 +70,16 @@
 
     <!-- Charts -->
     <section class="chart-section">
+      <div class="chart-container breadth-wrap">
+        <h2>IHSG &amp; Advance/Decline Line</h2>
+        <div class="breadth-frame">
+          <canvas id="breadth-chart"></canvas>
+          <div class="bc-tip" id="breadth-tip"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="chart-section">
       <div class="chart-container">
         <h2>A/D Ratio (Daily)</h2>
         <canvas id="ad-ratio-chart"></canvas>
@@ -103,6 +113,7 @@
               <th>Unch</th>
               <th>Spread</th>
               <th>Ratio</th>
+              <th>A/D Line</th>
               <th>McClellan</th>
             </tr>
           </thead>
@@ -117,7 +128,7 @@
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="breadth-chart.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

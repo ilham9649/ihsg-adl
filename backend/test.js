@@ -9,15 +9,28 @@ import { test, describe } from 'node:test';
 import { buildDailyCounts, computeSeries } from './scrapers/yahoo.js';
 import { FALLBACK_TICKERS } from './lib/tickers.js';
 
-describe('computeSeries — output shape (no cumulative adLine)', () => {
-  test('does not emit an adLine field (cumulative A/D Line was removed as an artifact)', () => {
+// Helper: assert the A/D Line cumulative invariant (adLine is a genuine running
+// sum of spreads, never resets).
+function assertCumulativeInvariant(series, label = '') {
+  ok(series.length > 0, `${label}: series must be non-empty`);
+  let expected = 0;
+  for (let i = 0; i < series.length; i++) {
+    expected += series[i].spread;
+    strictEqual(series[i].adLine, expected, `${label}: adLine[${i}]=${series[i].adLine} must equal cumulative spread ${expected}`);
+  }
+  strictEqual(series[series.length - 1].adLine, series.reduce((s, d) => s + d.spread, 0),
+    `${label}: final adLine must equal sum of all spreads`);
+}
+
+describe('computeSeries — cumulative A/D Line (genuine, from adjusted-close breadth)', () => {
+  test('adLine is present and a perfectly cumulative sum that never resets', () => {
     const series = computeSeries([
-      { date: '2026-01-01', advances: 200, declines: 100, unchanged: 50 },
-      { date: '2026-01-02', advances: 100, declines: 200, unchanged: 50 },
+      { date: '2026-03-16', advances: 115, declines: 315, unchanged: 68 },
+      { date: '2026-03-17', advances: 289, declines: 115, unchanged: 94 },
+      { date: '2026-03-25', advances: 341, declines: 94, unchanged: 63 },
     ]);
-    for (const d of series) {
-      ok(!('adLine' in d), 'no adLine field should be present');
-    }
+    for (const d of series) ok('adLine' in d, 'adLine field present');
+    assertCumulativeInvariant(series, 'first-3-days');
   });
 
   test('sorts output ascending by date', () => {

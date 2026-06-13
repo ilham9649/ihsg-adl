@@ -6,6 +6,7 @@ const API_BASE = window.location.origin;
 
 let allData = [];
 let charts = {};
+let breadthChart = null;
 
 // ── Chart defaults ──
 Chart.defaults.color = '#8899aa';
@@ -118,10 +119,20 @@ function getFilteredData() {
 function renderAll() {
   const data = getFilteredData();
   renderCards(data);
+  renderBreadth(data);
   renderADRatio(data);
   renderMcClellan(data);
   renderAdvDec(data);
   renderTable(data);
+}
+
+// ── IHSG + A/D Line two-panel chart ──
+function renderBreadth(data) {
+  const canvas = document.getElementById('breadth-chart');
+  const tip = document.getElementById('breadth-tip');
+  if (!canvas || !tip) return;
+  if (!breadthChart) breadthChart = new BreadthChart(canvas, tip);
+  breadthChart.setData(data);
 }
 
 // ── Cards ──
@@ -328,6 +339,7 @@ function renderTable(data) {
       <td>${d.unchanged}</td>
       <td class="${d.spread >= 0 ? 'td-positive' : 'td-negative'}">${d.spread >= 0 ? '+' : ''}${d.spread}</td>
       <td>${d.ratio.toFixed(2)}</td>
+      <td>${d.adLine != null ? d.adLine.toLocaleString() : '—'}</td>
       <td class="${d.mcClellan >= 0 ? 'td-positive' : 'td-negative'}">${d.mcClellan >= 0 ? '+' : ''}${d.mcClellan.toFixed(1)}</td>
     </tr>
   `).join('');

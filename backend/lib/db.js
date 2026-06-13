@@ -18,7 +18,7 @@ export async function getAllData() {
   do {
     const result = await client.send(new ScanCommand({
       TableName: TABLE_NAME,
-      ProjectionExpression: '#d, advances, declines, unchanged, spread, #r, mcClellan',
+      ProjectionExpression: '#d, advances, declines, unchanged, spread, #r, adLine, mcClellan, ihsg, ihsgOpen, ihsgHigh, ihsgLow',
       ExpressionAttributeNames: { '#d': 'date', '#r': 'ratio' },
       FilterExpression: '#d <> :lock',
       ExpressionAttributeValues: { ':lock': { S: LOCK_KEY } },
@@ -29,6 +29,8 @@ export async function getAllData() {
     lastEvaluatedKey = result.LastEvaluatedKey;
   } while (lastEvaluatedKey);
 
+  const num = (item, key) => (item[key]?.N != null ? parseFloat(item[key].N) : null);
+
   return items
     .map(item => ({
       date: item.date.S,
@@ -37,10 +39,34 @@ export async function getAllData() {
       unchanged: parseInt(item.unchanged.N, 10),
       spread: parseInt(item.spread.N, 10),
       ratio: parseFloat(item.ratio.N),
+      adLine: num(item, 'adLine'),
       mcClellan: parseFloat(item.mcClellan.N),
+      ihsg: num(item, 'ihsg'),
+      ihsgOpen: num(item, 'ihsgOpen'),
+      ihsgHigh: num(item, 'ihsgHigh'),
+      ihsgLow: num(item, 'ihsgLow'),
     }))
     .filter(item => !isNaN(item.advances)) // Filter out any malformed items
     .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// Build a DynamoDB Item from a daily record. Index OHLC fields are optional —
+// only written when present (older rows / partial coverage).
+function buildItem(r) {
+  const item = {
+    date: { S: r.date },
+    advances: { N: String(r.advances) },
+    declines: { N: String(r.declines) },
+    unchanged: { N: String(r.unchanged) },
+    spread: { N: String(r.spread) },
+    ratio: { N: String(r.ratio) },
+    adLine: { N: String(r.adLine) },
+    mcClellan: { N: String(r.mcClellan) },
+  };
+  for (const k of ['ihsg', 'ihsgOpen', 'ihsgHigh', 'ihsgLow']) {
+    if (typeof r[k] === 'number' && !isNaN(r[k])) item[k] = { N: String(r[k]) };
+  }
+  return item;
 }
 
 export async function batchPutData(records) {
@@ -51,19 +77,7 @@ export async function batchPutData(records) {
   }
 
   for (const chunk of chunks) {
-    const putRequests = chunk.map(r => ({
-      PutRequest: {
-        Item: {
-          date: { S: r.date },
-          advances: { N: String(r.advances) },
-          declines: { N: String(r.declines) },
-          unchanged: { N: String(r.unchanged) },
-          spread: { N: String(r.spread) },
-          ratio: { N: String(r.ratio) },
-          mcClellan: { N: String(r.mcClellan) },
-        },
-      },
-    }));
+    const putRequests = chunk.map(r => ({ PutRequest: { Item: buildItem(r) } }));
 
     await client.send(new BatchWriteItemCommand({
       RequestItems: { [TABLE_NAME]: putRequests },
@@ -74,15 +88,7 @@ export async function batchPutData(records) {
 export async function putData(record) {
   await client.send(new PutItemCommand({
     TableName: TABLE_NAME,
-    Item: {
-      date: { S: record.date },
-      advances: { N: String(record.advances) },
-      declines: { N: String(record.declines) },
-      unchanged: { N: String(record.unchanged) },
-      spread: { N: String(record.spread) },
-      ratio: { N: String(record.ratio) },
-      mcClellan: { N: String(record.mcClellan) },
-    },
+    Item: buildItem(record),
   }));
 }
 
