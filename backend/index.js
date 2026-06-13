@@ -47,8 +47,11 @@ async function refreshData() {
     // We merge today's scrape into them and recompute the FULL cumulative
     // series from the start, so the A/D Line can never drift/reset.
     const existing = await getAllData();
-    const DAYS_BACK = existing.length > 365 ? 120 : 1100; // seed 3+ yrs once, then recent
-    console.log(`Scraping ${tickers.length} tickers, ${DAYS_BACK} days back (existing ${existing.length} days)`);
+    // Full backfill (3+ yrs) on first run, or when the index (ihsg) data is missing
+    // (e.g. data written by an older schema). Otherwise just refresh the recent window.
+    const needsBackfill = existing.length === 0 || existing.some(d => d.ihsg == null);
+    const DAYS_BACK = (!needsBackfill && existing.length > 365) ? 120 : 1100;
+    console.log(`Scraping ${tickers.length} tickers, ${DAYS_BACK} days back (existing ${existing.length} days, backfill=${needsBackfill})`);
 
     // Fetch the IHSG index (^JKSE) OHLC for the price panel.
     const indexBars = await fetchChart('^JKSE', DAYS_BACK);
