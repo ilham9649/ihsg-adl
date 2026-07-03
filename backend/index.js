@@ -37,7 +37,7 @@ function getPath(event) {
 // guarantees the whole breadth series is consistent with the current universe —
 // no stale counts from prior runs. The universe is the full IDX list (~500
 // stocks), so a run takes a few minutes; ensure the Lambda timeout allows it.
-const DAYS_BACK = 1100; // ~3+ years of trading days
+const DAYS_BACK = 2800; // ~7.5 years of trading days (history back to ~2019)
 
 async function refreshData() {
   const locked = await acquireRefreshLock();
