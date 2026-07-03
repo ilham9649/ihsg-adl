@@ -145,9 +145,12 @@
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       const want = Math.min(8, n);
+      // Over a multi-year window, MM-DD alone is ambiguous — show YYYY-MM instead.
+      const multiYear = n > 1 && this.data[0].date.slice(0, 4) !== this.data[n - 1].date.slice(0, 4);
       for (let k = 0; k < want; k++) {
         const i = Math.floor((k + 0.5) * n / want);
-        ctx.fillText(this.data[i].date.slice(5), this._xAt(i, n, p), p.y + p.h + 6);
+        const ds = this.data[i].date;
+        ctx.fillText(multiYear ? ds.slice(0, 7) : ds.slice(5), this._xAt(i, n, p), p.y + p.h + 6);
       }
     }
 
@@ -217,8 +220,10 @@
       for (const [x, y] of pts) ctx.lineTo(x, y);
       ctx.lineTo(pts[pts.length - 1][0], baseY); ctx.closePath();
       ctx.fillStyle = fill; ctx.fill();
-      // faint unsmoothed underlay (clipped to plot so it can't distort the scale)
-      if (this.rawField) {
+      // faint unsmoothed underlay (clipped to plot so it can't distort the scale).
+      // Skip it once points get dense (e.g. multi-year "All"), where it degrades
+      // into noisy vertical hatching and the smoothed trend is what matters.
+      if (this.rawField && n <= 250) {
         ctx.save();
         ctx.beginPath(); ctx.rect(p.x, p.y, p.w, p.h); ctx.clip();
         ctx.beginPath();
