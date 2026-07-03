@@ -4,10 +4,29 @@
 
 const API_BASE = window.location.origin;
 
+// Raw daily % Advancing is very noisy (each session is a fresh draw of ~500
+// stocks), so the breadth line is smoothed with a trailing moving average.
+// Computed over the FULL series (not the sliced range) so the visible window has
+// no warmup gap. Tune the window here.
+const PCT_SMOOTH_WINDOW = 20;
+
 let allData = [];
 let charts = {};
 let ihsgChart = null;
 let adlineChart = null;
+
+// Attach pctAdvancingMA = trailing SMA of pctAdvancing over PCT_SMOOTH_WINDOW days.
+// Uses whatever prior values exist (shorter window at the very start → no gaps).
+function attachPctSmoothing(rows, window) {
+  const vals = rows.map(r => (r.pctAdvancing != null ? r.pctAdvancing : null));
+  for (let i = 0; i < rows.length; i++) {
+    let sum = 0, cnt = 0;
+    for (let k = Math.max(0, i - window + 1); k <= i; k++) {
+      if (vals[k] != null) { sum += vals[k]; cnt++; }
+    }
+    rows[i].pctAdvancingMA = cnt ? parseFloat((sum / cnt).toFixed(2)) : null;
+  }
+}
 
 // ── Chart defaults ──
 Chart.defaults.color = '#8899aa';
@@ -45,6 +64,7 @@ async function fetchData() {
 
     if (data.success && data.data && data.data.length > 0) {
       allData = data.data;
+      attachPctSmoothing(allData, PCT_SMOOTH_WINDOW);
       document.getElementById('last-updated').textContent = `Last: ${allData[allData.length - 1].date}`;
       renderAll();
     } else {
@@ -138,7 +158,10 @@ function renderBreadth(data) {
   const ac = document.getElementById('adline-chart');
   const at = document.getElementById('adline-tip');
   if (ac && at) {
-    if (!adlineChart) adlineChart = new BreadthChart(ac, at, { panel: 'adline' });
+    if (!adlineChart) adlineChart = new BreadthChart(ac, at, {
+      panel: 'series', field: 'pctAdvancingMA', rawField: 'pctAdvancing',
+      label: `% ADVANCING · ${PCT_SMOOTH_WINDOW}D AVG`, ref: 50, unit: '%',
+    });
     adlineChart.setData(data);
   }
 }
@@ -347,7 +370,7 @@ function renderTable(data) {
       <td>${d.unchanged}</td>
       <td class="${d.spread >= 0 ? 'td-positive' : 'td-negative'}">${d.spread >= 0 ? '+' : ''}${d.spread}</td>
       <td>${d.ratio.toFixed(2)}</td>
-      <td>${d.adLine != null ? d.adLine.toLocaleString() : '—'}</td>
+      <td class="${d.pctAdvancing != null && d.pctAdvancing >= 50 ? 'td-positive' : 'td-negative'}">${d.pctAdvancing != null ? d.pctAdvancing.toFixed(1) + '%' : '—'}</td>
       <td class="${d.mcClellan >= 0 ? 'td-positive' : 'td-negative'}">${d.mcClellan >= 0 ? '+' : ''}${d.mcClellan.toFixed(1)}</td>
     </tr>
   `).join('');

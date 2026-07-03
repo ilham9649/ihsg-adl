@@ -97,13 +97,20 @@ export function buildDailyCounts(allTickersAD) {
  * Non-trading days (advances+declines == 0) are dropped.
  *
  * The cumulative A/D Line (adLine) is a running sum of (advances - declines).
- * It is GENUINE here because the caller classifies advances/declines from
- * dividend-adjusted closes (see fetchChart), so ex-dividend days are not
- * miscounted as declines — the line rises with a rising market like a real
- * A/D Line, instead of drifting monotonically down.
+ * NOTE: a raw cumulative A/D Line is NOT a mean-reverting oscillator — it can
+ * (and, for the IDX universe, does) trend down for years whenever equal-weight
+ * breadth is persistently negative while the cap-weighted index is propped up by
+ * a few mega-caps. This is genuine, not a bug: over 2023–2026 ~40 of 44 large
+ * caps (and the broad ~500 universe → line ≈ -16k) had more down-days than
+ * up-days. So adLine is kept only as a raw datum; the headline breadth measure
+ * is pctAdvancing below, which oscillates around 50%.
  *
- * McClellan = EMA(19) - EMA(39) of the daily spread, seeded with an SMA over the
- * first 19/39 days.
+ * pctAdvancing = advances / (advances + declines) * 100 — the share of the
+ * trading universe that rose. It oscillates around a 50% neutral line (>50 =
+ * broad strength, <50 = broad weakness) instead of drifting like adLine.
+ *
+ * McClellan Oscillator = EMA(19) - EMA(39) of the daily spread, seeded with an
+ * SMA over the first 19/39 days.
  */
 export function computeSeries(dailyCounts) {
   // Drop phantom / non-trading days: a real session with a few hundred liquid
@@ -126,6 +133,11 @@ export function computeSeries(dailyCounts) {
     const ratio = d.declines === 0
       ? (d.advances === 0 ? 1 : 100)
       : parseFloat((d.advances / d.declines).toFixed(4));
+
+    // % Advancing: share of the advancing+declining universe that rose today.
+    // Oscillates around 50% (unchanged excluded so 50 is a true neutral line).
+    const advDec = d.advances + d.declines;
+    const pctAdvancing = advDec === 0 ? 50 : parseFloat((d.advances / advDec * 100).toFixed(2));
 
     // McClellan: SMA seed for the first 19 (ema19) / 39 (ema39) days, then EMA.
     n++;
@@ -154,6 +166,7 @@ export function computeSeries(dailyCounts) {
       ratio,
       adLine: cumulativeAD,
       mcClellan,
+      pctAdvancing,
     };
   });
 }

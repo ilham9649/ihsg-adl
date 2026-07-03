@@ -1,37 +1,75 @@
 // ──────────────────────────────────────────────
-// Breadth Universe — a STABLE, LIQUID set of large-cap IDX stocks (LQ45-style)
+// Breadth Universe — the FULL IDX list (~500 stocks) for genuine market breadth
 // ──────────────────────────────────────────────
-// Using a stable, liquid universe — NOT the full ~900 IDX list — is essential for a
-// trustworthy cumulative A/D Line. The broad list includes many illiquid / suspended
-// small caps whose Yahoo data is forward-filled or stale, which injects phantom net
-// declines that compound monotonically. With the raw ~500-stock universe the A/D Line
-// declined ~16,000 over 3 years DURING a +28% IHSG rally — an artifact, not real
-// breadth. A stable liquid universe (like the S&P 500's) produces a line that
-// genuinely rises/falls with the market. Validated against the published
-// S&P 500 / NYSE A/D Line methodology (raw vs adjusted close + universe stability).
+// A market-breadth A/D line is only meaningful over a BROAD universe. We discover
+// the full Indonesia Stock Exchange list from stockanalysis.com (~500 tickers) so
+// the breadth metrics reflect the whole market — not just a few mega-caps that
+// prop up the cap-weighted IHSG.
 //
-// Advancers are classified on the dividend/split-ADJUSTED close (see yahoo.js).
+// IMPORTANT: with the broad universe, equal-weight breadth over 2023–2026 is
+// persistently NEGATIVE (hundreds of small/mid-caps bled while a handful of
+// mega-caps held the index up), so the RAW cumulative A/D Line drifts down ~16k.
+// That is genuine breadth, not a data artifact (a volume/forward-fill filter does
+// not change it). The dashboard therefore leads with % Advancing — the share of
+// the universe that rose each day, oscillating around 50% — instead of the raw
+// A/D Line. Advancers are classified on the dividend/split-ADJUSTED close (see
+// yahoo.js) so ex-dividend days are not miscounted as declines.
 
-const LIQUID_TICKERS = [
-  // Banks & financials
+// Liquid LQ45-style fallback, used only if discovery fails (site blocked, etc.).
+const FALLBACK_TICKERS = [
   'BBCA','BBRI','BMRI','BBNI','BRIS','BTPS',
-  // Consumer / staples / healthcare
   'UNVR','ICBP','INDF','GGRM','HMSP','KLBF','SIDO','AMRT','CPIN','ACES','MAPI','LPPF','JPFA',
-  // Telco / media / towers
   'TLKM','ISAT','EXCL','EMTK','TBIG','TOWR',
-  // Resources / energy / materials
   'ADRO','ANTM','PTBA','ITMG','INCO','MDKA','INKP','UNTR','ASII','TPIA','AKRA','PGAS','MEDC','MBAP',
-  // Property / infrastructure
   'BSDE','CTRA','PWON','SMRA','JSMR',
 ];
 
 /**
- * Breadth universe — always the stable liquid set (LQ45-style).
+ * Discover the full IDX ticker list from stockanalysis.com.
+ * Returns an array of bare symbols (no .JK), or null if discovery fails / is blocked.
  */
-export async function getAllTickers() {
-  return LIQUID_TICKERS.map(t => t + '.JK');
+export async function discoverTickers() {
+  try {
+    const tickers = [];
+    for (let page = 1; page <= 3; page++) {
+      const url = page === 1
+        ? 'https://stockanalysis.com/list/indonesia-stock-exchange/'
+        : `https://stockanalysis.com/list/indonesia-stock-exchange/?p=${page}`;
+
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) break;
+
+      const html = await res.text();
+      for (const m of html.matchAll(/href="\/quote\/idx\/([^/]+)\//g)) {
+        const ticker = m[1];
+        if (ticker.length >= 3 && ticker.length <= 5 && /^[A-Z0-9]+$/.test(ticker)) {
+          tickers.push(ticker);
+        }
+      }
+      if (page < 3) await new Promise(r => setTimeout(r, 500));
+    }
+
+    const unique = [...new Set(tickers)];
+    console.log(`Discovered ${unique.length} IDX tickers from stockanalysis.com`);
+    // Guard: if the site is blocked / layout changed we get too few — fall back.
+    return unique.length > 100 ? unique : null;
+  } catch (err) {
+    console.error('Ticker discovery failed:', err.message?.substring(0, 100));
+    return null;
+  }
 }
 
-// Kept for backward compatibility / tests.
-const FALLBACK_TICKERS = LIQUID_TICKERS;
+/**
+ * Breadth universe — the discovered full IDX list, or the liquid fallback.
+ */
+export async function getAllTickers() {
+  const discovered = await discoverTickers();
+  const base = discovered || FALLBACK_TICKERS;
+  if (!discovered) console.log(`Using fallback universe: ${FALLBACK_TICKERS.length} tickers`);
+  return base.map(t => t + '.JK');
+}
+
 export { FALLBACK_TICKERS };

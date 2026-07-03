@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Serverless IHSG (Jakarta Composite Index) market breadth dashboard. Tracks ~500 IDX stocks daily, calculating A/D Ratio, Spread, and McClellan Oscillator.
+Serverless IHSG (Jakarta Composite Index) market breadth dashboard. Tracks ~500 IDX stocks daily, calculating **% Advancing**, A/D Ratio, Spread, and McClellan Oscillator.
 
-> **No cumulative A/D Line** — it was removed because, computed from raw (unadjusted) closes, ex-dividend days inject a systematic downward bias that compounds monotonically (it declined ~16,000 over 3 years during a +28% index rally — not how a real A/D Line behaves). Only non-cumulative metrics are shown. See `computeSeries` in `backend/scrapers/yahoo.js` for the rationale comment.
+> **Headline breadth = % Advancing, NOT the cumulative A/D Line.** A raw cumulative A/D Line (running sum of advances−declines) is not a mean-reverting oscillator: over 2023–2026 it drifts down ~1.5k on the liquid set and ~16k on the broad ~500 universe, because Indonesia's equal-weight breadth was persistently negative while the cap-weighted IHSG was held up by a few mega-caps. This is **genuine breadth, not a computation bug** — verified: switching raw→adjusted close removes only ~5–11% of the drift, and a volume/forward-fill filter removes ~0%. So the dashboard leads with `pctAdvancing` = advances/(advances+declines)×100, which oscillates around 50%. `adLine` is still computed and stored as a raw datum (and its cumulative invariant is unit-tested) but is not charted. See `computeSeries` in `backend/scrapers/yahoo.js`.
 
 **Live:** [finance.sulaksono.id](https://finance.sulaksono.id)
 
@@ -56,7 +56,9 @@ The Lambda handler (`backend/index.js`) supports both REST API v1 and HTTP API v
 Frontend (`frontend/app.js`) handles both formats when parsing API responses.
 
 ### Ticker Discovery
-`backend/lib/tickers.js` fetches IDX tickers from stockanalysis.com (3 pages, ~500 tickers). Falls back to hardcoded list of ~70 liquid LQ45 stocks if discovery fails. All tickers are suffixed with `.JK` for Yahoo Finance.
+`backend/lib/tickers.js` fetches the full IDX universe from stockanalysis.com (3 pages, ~500 tickers) for genuine market breadth. Falls back to a hardcoded list of ~44 liquid LQ45-style stocks (`FALLBACK_TICKERS`) if discovery fails (site blocked / layout change → fewer than 100 matches). All tickers are suffixed with `.JK` for Yahoo Finance.
+
+> **Refresh duration vs. API Gateway 29s limit:** a ~500-ticker scrape takes several minutes (batches of 3, 2s apart). The scheduled EventBridge run invokes the Lambda directly, so it's only bounded by the Lambda timeout (ensure it's set high, e.g. 10 min). The manual `POST /api/ad/refresh` **Refresh** button goes through API Gateway, which caps at ~29s — so the button will return a 504 for the broad universe even though the Lambda keeps running and still writes the data. Treat the daily cron as the source of truth.
 
 ### Yahoo Finance Scraper
 Uses Yahoo Finance v8 chart API directly (`/v8/finance/chart/{ticker}`) — no external library dependency. Rate limited by:

@@ -1,6 +1,7 @@
 // ──────────────────────────────────────────────
 // BreadthChart — dependency-free canvas chart for market breadth.
-// panel option: 'price' (IHSG candlesticks) | 'adline' (cumulative A/D Line area)
+// panel option: 'price' (IHSG candlesticks) | 'series' (an oscillating breadth
+//   line, e.g. % Advancing). For 'series' pass { field, label, ref, unit }.
 //   Use two instances for two separate charts. No build step, no plugins.
 // ──────────────────────────────────────────────
 (function () {
@@ -16,7 +17,12 @@
       this.canvas = canvas;
       this.ctx = canvas.getContext('2d');
       this.tooltip = tooltip || null;
-      this.panel = opts.panel || 'price'; // 'price' | 'adline'
+      this.panel = opts.panel || 'price'; // 'price' | 'series'
+      this.field = opts.field || 'pctAdvancing'; // data key for the 'series' panel
+      this.rawField = opts.rawField || null; // optional faint underlay (unsmoothed)
+      this.label = opts.label || '% ADVANCING';
+      this.ref = (opts.ref != null) ? opts.ref : null; // neutral/reference line (e.g. 50)
+      this.unit = opts.unit || '';
       this.data = [];
       this.dpr = Math.max(1, window.devicePixelRatio || 1);
       this.hover = -1;
@@ -116,7 +122,7 @@
         return;
       }
       if (this.panel === 'price') this._drawPrice(rows, p);
-      else this._drawADLine(rows, p);
+      else this._drawSeries(rows, p);
       if (this.hover >= 0 && this.hover < rows.length) this._drawCrosshair(rows, p);
     }
 
@@ -184,36 +190,57 @@
       ctx.fillText('IHSG', p.x + 4, p.y + 2);
     }
 
-    _drawADLine(rows, p) {
+    _drawSeries(rows, p) {
       const ctx = this.ctx;
       const n = rows.length;
-      const ad = rows.map(r => r.adLine).filter(v => v != null);
-      if (ad.length < 2) { this._drawGrid(p); this._drawXAxis(p, n); return; }
-      const scale = this._scale(Math.min(...ad), Math.max(...ad), p.h);
-      const lastPositive = rows[rows.length - 1].adLine >= 0;
-      const stroke = lastPositive ? this.col.line : this.col.lineDown;
-      const fill = lastPositive ? this.col.fill : this.col.fillDown;
+      const field = this.field, ref = this.ref;
+      const vals = rows.map(r => r[field]).filter(v => v != null);
+      if (vals.length < 2) { this._drawGrid(p); this._drawXAxis(p, n); return; }
+      // Keep the reference line (e.g. 50%) inside the visible range.
+      let dMin = Math.min(...vals), dMax = Math.max(...vals);
+      if (ref != null) { dMin = Math.min(dMin, ref); dMax = Math.max(dMax, ref); }
+      const scale = this._scale(dMin, dMax, p.h);
+      const lastVal = rows[rows.length - 1][field];
+      const above = ref != null ? lastVal >= ref : lastVal >= 0;
+      const stroke = above ? this.col.up : this.col.down;
+      const fill = above ? 'rgba(34,197,94,0.12)' : this.col.fillDown;
 
       this._drawGrid(p);
       const pts = [];
       for (let i = 0; i < n; i++) {
-        if (rows[i].adLine == null) continue;
-        pts.push([this._xAt(i, n, p), p.y + scale.y(rows[i].adLine)]);
+        if (rows[i][field] == null) continue;
+        pts.push([this._xAt(i, n, p), p.y + scale.y(rows[i][field])]);
       }
-      // area
-      const baseY = p.y + p.h;
+      // area (anchored to the reference line when we have one, else the axis floor)
+      const baseY = p.y + (ref != null ? scale.y(ref) : p.h);
       ctx.beginPath(); ctx.moveTo(pts[0][0], baseY);
       for (const [x, y] of pts) ctx.lineTo(x, y);
       ctx.lineTo(pts[pts.length - 1][0], baseY); ctx.closePath();
       ctx.fillStyle = fill; ctx.fill();
+      // faint unsmoothed underlay (clipped to plot so it can't distort the scale)
+      if (this.rawField) {
+        ctx.save();
+        ctx.beginPath(); ctx.rect(p.x, p.y, p.w, p.h); ctx.clip();
+        ctx.beginPath();
+        let started = false;
+        for (let i = 0; i < n; i++) {
+          const rv = rows[i][this.rawField];
+          if (rv == null) { started = false; continue; }
+          const rx = this._xAt(i, n, p), ry = p.y + scale.y(rv);
+          if (!started) { ctx.moveTo(rx, ry); started = true; } else ctx.lineTo(rx, ry);
+        }
+        ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.restore();
+      }
       // line
       ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
       for (const [x, y] of pts) ctx.lineTo(x, y);
       ctx.strokeStyle = stroke; ctx.lineWidth = 1.8; ctx.stroke();
-      // zero line if scale crosses 0
-      if (scale.lo < 0 && scale.hi > 0) {
-        const zy = p.y + scale.y(0);
-        ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+      // reference / neutral line
+      const refVal = ref != null ? ref : ((scale.lo < 0 && scale.hi > 0) ? 0 : null);
+      if (refVal != null) {
+        const zy = p.y + scale.y(refVal);
+        ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(p.x, zy); ctx.lineTo(p.x + p.w, zy); ctx.stroke(); ctx.setLineDash([]);
       }
       // y-axis labels
@@ -222,12 +249,12 @@
       for (const t of this._niceTicks(scale.lo, scale.hi, 5)) {
         const y = p.y + scale.y(t);
         if (y < p.y || y > p.y + p.h) continue;
-        ctx.fillText(this._fmt(t), p.x + p.w + 6, y);
+        ctx.fillText(this._fmt(t) + this.unit, p.x + p.w + 6, y);
       }
       this._drawXAxis(p, n);
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
       ctx.fillStyle = this.col.axis; ctx.font = '600 10px IBM Plex Sans, sans-serif';
-      ctx.fillText('A/D LINE', p.x + 4, p.y + 2);
+      ctx.fillText(this.label, p.x + 4, p.y + 2);
     }
 
     _drawCrosshair(rows, p) {
@@ -270,18 +297,25 @@
           tip.appendChild(chgRow);
         }
       } else {
+        const val = r[this.field];
+        const above = this.ref != null ? (val >= this.ref) : (val >= 0);
         const row = el('div', 'bc-row');
-        row.appendChild(el('span', null, 'A/D Line'));
-        const b = el('b', null, fmt(r.adLine, 0));
-        b.style.color = this.col.line;
+        row.appendChild(el('span', null, this.label));
+        const b = el('b', null, fmt(val, this.unit === '%' ? 1 : 0) + this.unit);
+        b.style.color = above ? this.col.up : this.col.down;
         row.appendChild(b);
         tip.appendChild(row);
-        const sp = el('div', 'bc-row');
-        sp.appendChild(el('span', null, 'day spread'));
-        const sb = el('b', null, (r.spread >= 0 ? '+' : '') + r.spread);
-        sb.style.color = r.spread >= 0 ? this.col.up : this.col.down;
-        sp.appendChild(sb);
-        tip.appendChild(sp);
+        if (this.rawField && r[this.rawField] != null) {
+          const rw = el('div', 'bc-row');
+          rw.appendChild(el('span', null, 'that day'));
+          rw.appendChild(el('b', null, fmt(r[this.rawField], 1) + this.unit));
+          tip.appendChild(rw);
+        }
+        const ad = el('div', 'bc-row');
+        ad.appendChild(el('span', null, 'adv / dec'));
+        const ab = el('b', null, r.advances + ' / ' + r.declines);
+        ad.appendChild(ab);
+        tip.appendChild(ad);
       }
 
       tip.style.display = 'block';

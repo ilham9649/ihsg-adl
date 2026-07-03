@@ -33,10 +33,10 @@ function getPath(event) {
   return p;
 }
 
-// Always re-scrape the full history and recompute the entire series fresh.
-// This is cheap (~30s) because the breadth universe is a small, stable, liquid
-// set (~44 LQ45-style stocks), and it guarantees the whole A/D series is always
-// consistent with the current universe — no stale counts from prior runs.
+// Always re-scrape the full history and recompute the entire series fresh. This
+// guarantees the whole breadth series is consistent with the current universe —
+// no stale counts from prior runs. The universe is the full IDX list (~500
+// stocks), so a run takes a few minutes; ensure the Lambda timeout allows it.
 const DAYS_BACK = 1100; // ~3+ years of trading days
 
 async function refreshData() {

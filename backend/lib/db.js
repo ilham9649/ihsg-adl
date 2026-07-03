@@ -18,7 +18,7 @@ export async function getAllData() {
   do {
     const result = await client.send(new ScanCommand({
       TableName: TABLE_NAME,
-      ProjectionExpression: '#d, advances, declines, unchanged, spread, #r, adLine, mcClellan, ihsg, ihsgOpen, ihsgHigh, ihsgLow',
+      ProjectionExpression: '#d, advances, declines, unchanged, spread, #r, adLine, mcClellan, pctAdvancing, ihsg, ihsgOpen, ihsgHigh, ihsgLow',
       ExpressionAttributeNames: { '#d': 'date', '#r': 'ratio' },
       FilterExpression: '#d <> :lock',
       ExpressionAttributeValues: { ':lock': { S: LOCK_KEY } },
@@ -41,6 +41,7 @@ export async function getAllData() {
       ratio: parseFloat(item.ratio.N),
       adLine: num(item, 'adLine'),
       mcClellan: parseFloat(item.mcClellan.N),
+      pctAdvancing: num(item, 'pctAdvancing'),
       ihsg: num(item, 'ihsg'),
       ihsgOpen: num(item, 'ihsgOpen'),
       ihsgHigh: num(item, 'ihsgHigh'),
@@ -63,6 +64,9 @@ function buildItem(r) {
     adLine: { N: String(r.adLine) },
     mcClellan: { N: String(r.mcClellan) },
   };
+  if (typeof r.pctAdvancing === 'number' && !isNaN(r.pctAdvancing)) {
+    item.pctAdvancing = { N: String(r.pctAdvancing) };
+  }
   for (const k of ['ihsg', 'ihsgOpen', 'ihsgHigh', 'ihsgLow']) {
     if (typeof r[k] === 'number' && !isNaN(r[k])) item[k] = { N: String(r[k]) };
   }

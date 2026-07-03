@@ -72,6 +72,25 @@ describe('computeSeries — ratio & spread', () => {
   });
 });
 
+describe('computeSeries — % Advancing (oscillating breadth)', () => {
+  test('pctAdvancing = advances / (advances + declines) * 100, unchanged excluded', () => {
+    const [d] = computeSeries([{ date: '2026-01-01', advances: 300, declines: 100, unchanged: 999 }]);
+    strictEqual(d.pctAdvancing, 75); // 300 / 400, independent of unchanged
+  });
+
+  test('oscillates around 50 and stays within [0, 100]', () => {
+    const series = computeSeries([
+      { date: '2026-01-01', advances: 90, declines: 10, unchanged: 5 },   // 90%
+      { date: '2026-01-02', advances: 20, declines: 80, unchanged: 5 },   // 20%
+      { date: '2026-01-03', advances: 50, declines: 50, unchanged: 5 },   // 50%
+    ]);
+    strictEqual(series[0].pctAdvancing, 90);
+    strictEqual(series[1].pctAdvancing, 20);
+    strictEqual(series[2].pctAdvancing, 50);
+    for (const d of series) ok(d.pctAdvancing >= 0 && d.pctAdvancing <= 100, 'in [0,100]');
+  });
+});
+
 describe('computeSeries — McClellan oscillator', () => {
   test('McClellan is finite and warms up over the series (no monotonic drift)', () => {
     const counts = [];
