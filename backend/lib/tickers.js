@@ -1,75 +1,106 @@
 // ──────────────────────────────────────────────
-// Breadth Universe — the FULL IDX list (~500 stocks) for genuine market breadth
-// ──────────────────────────────────────────────
-// A market-breadth A/D line is only meaningful over a BROAD universe. We discover
-// the full Indonesia Stock Exchange list from stockanalysis.com (~500 tickers) so
-// the breadth metrics reflect the whole market — not just a few mega-caps that
-// prop up the cap-weighted IHSG.
+// Breadth Universe — the FULL IDX listing (all boards), scraped from the IDX
+// official securities list (idx.co.id, GetSecuritiesStock). 957 tickers as of
+// 2026-07-04. IDX's API blocks server-side fetches (Cloudflare/403) and the
+// stockanalysis.com free list caps at 500, so the complete universe is hardcoded
+// here and should be refreshed periodically (re-scrape IDX in a browser).
 //
-// IMPORTANT: with the broad universe, equal-weight breadth over 2023–2026 is
-// persistently NEGATIVE (hundreds of small/mid-caps bled while a handful of
-// mega-caps held the index up), so the RAW cumulative A/D Line drifts down ~16k.
-// That is genuine breadth, not a data artifact (a volume/forward-fill filter does
-// not change it). The dashboard therefore leads with % Advancing — the share of
-// the universe that rose each day, oscillating around 50% — instead of the raw
-// A/D Line. Advancers are classified on the dividend/split-ADJUSTED close (see
-// yahoo.js) so ex-dividend days are not miscounted as declines.
+// This is the WHOLE market: Main + Development + Acceleration + Watchlist boards.
+// Many small/suspended names have no usable Yahoo data — fetchQuotes returns []
+// for those and they're simply excluded from the daily counts. Breadth is a
+// ratio (% Advancing), which tolerates that. Advancers are classified on the
+// dividend/split-ADJUSTED close (see yahoo.js).
 
-// Liquid LQ45-style fallback, used only if discovery fails (site blocked, etc.).
-const FALLBACK_TICKERS = [
-  'BBCA','BBRI','BMRI','BBNI','BRIS','BTPS',
-  'UNVR','ICBP','INDF','GGRM','HMSP','KLBF','SIDO','AMRT','CPIN','ACES','MAPI','LPPF','JPFA',
-  'TLKM','ISAT','EXCL','EMTK','TBIG','TOWR',
-  'ADRO','ANTM','PTBA','ITMG','INCO','MDKA','INKP','UNTR','ASII','TPIA','AKRA','PGAS','MEDC','MBAP',
-  'BSDE','CTRA','PWON','SMRA','JSMR',
+const IDX_TICKERS = [
+  'AALI','ABBA','ABDA','ABMM','ACES','ACST','ADES','ADHI','AISA','AKKU','AKPI','AKRA',
+  'AKSI','ALDO','ALKA','ALMI','ALTO','AMAG','AMFG','AMIN','AMRT','ANJT','ANTM','APEX',
+  'APIC','APII','APLI','APLN','ARGO','ARII','ARNA','ARTA','ARTI','ARTO','ASBI','ASDM',
+  'ASGR','ASII','ASJT','ASMI','ASRI','ASRM','ASSA','ATIC','AUTO','BABP','BACA','BAJA',
+  'BALI','BAPA','BATA','BAYU','BBCA','BBHI','BBKP','BBLD','BBMD','BBNI','BBRI','BBRM',
+  'BBTN','BBYB','BCAP','BCIC','BCIP','BDMN','BEKS','BEST','BFIN','BGTG','BHIT','BIKA',
+  'BIMA','BINA','BIPI','BIPP','BIRD','BISI','BJBR','BJTM','BKDP','BKSL','BKSW','BLTA',
+  'BLTZ','BMAS','BMRI','BMSR','BMTR','BNBA','BNBR','BNGA','BNII','BNLI','BOLT','BPFI',
+  'BPII','BRAM','BRMS','BRNA','BRPT','BSDE','BSIM','BSSR','BSWD','BTEK','BTEL','BTON',
+  'BTPN','BUDI','BUKK','BULL','BUMI','BUVA','BVIC','BWPT','BYAN','CANI','CASS','CEKA',
+  'CENT','CFIN','CINT','CITA','CLPI','CMNP','CMPP','CNKO','CNTX','COWL','CPIN','CPRO',
+  'CSAP','CTBN','CTRA','CTTH','DART','DEFI','DEWA','DGIK','DILD','DKFT','DLTA','DMAS',
+  'DNAR','DNET','DOID','DPNS','DSFI','DSNG','DSSA','DUTI','DVLA','DYAN','ECII','EKAD',
+  'ELSA','ELTY','EMDE','EMTK','ENRG','EPMT','ERAA','ERTX','ESSA','ESTI','ETWA','EXCL',
+  'FAST','FASW','FISH','FMII','FORU','FPNI','GAMA','GDST','GDYR','GEMA','GEMS','GGRM',
+  'GIAA','GJTL','GLOB','GMTD','GOLD','GOLL','GPRA','GSMF','GTBO','GWSA','GZCO','HADE',
+  'HDFA','HERO','HEXA','HITS','HMSP','HOME','HOTL','HRUM','IATA','IBFN','IBST','ICBP',
+  'ICON','IGAR','IIKP','IKAI','IKBI','IMAS','IMJS','IMPC','INAF','INAI','INCI','INCO',
+  'INDF','INDR','INDS','INDX','INDY','INKP','INPC','INPP','INRU','INTA','INTD','INTP',
+  'IPOL','ISAT','ISSP','ITMA','ITMG','JAWA','JECC','JIHD','JKON','JPFA','JRPT','JSMR',
+  'JSPT','JTPE','KAEF','KARW','KBLI','KBLM','KBLV','KBRI','KDSI','KIAS','KICI','KIJA',
+  'KKGI','KLBF','KOBX','KOIN','KONI','KOPI','KPIG','KRAS','KREN','LAPD','LCGP','LEAD',
+  'LINK','LION','LMAS','LMPI','LMSH','LPCK','LPGI','LPIN','LPKR','LPLI','LPPF','LPPS',
+  'LRNA','LSIP','LTLS','MAGP','MAIN','MAPI','MAYA','MBAP','MBSS','MBTO','MCOR','MDIA',
+  'MDKA','MDLN','MDRN','MEDC','MEGA','MERK','META','MFMI','MGNA','MICE','MIDI','MIKA',
+  'MIRA','MITI','MKPI','MLBI','MLIA','MLPL','MLPT','MMLP','MNCN','MPMX','MPPA','MRAT',
+  'MREI','MSKY','MTDL','MTFN','MTLA','MTSM','MYOH','MYOR','MYTX','NELY','NIKL','NIRO',
+  'NISP','NOBU','NRCA','OCAP','OKAS','OMRE','PADI','PALM','PANR','PANS','PBRX','PDES',
+  'PEGE','PGAS','PGLI','PICO','PJAA','PKPK','PLAS','PLIN','PNBN','PNBS','PNIN','PNLF',
+  'PSAB','PSDN','PSKT','PTBA','PTIS','PTPP','PTRO','PTSN','PTSP','PUDP','PWON','PYFA',
+  'RAJA','RALS','RANC','RBMS','RDTX','RELI','RICY','RIGS','RIMO','RODA','ROTI','RUIS',
+  'SAFE','SAME','SCCO','SCMA','SCPI','SDMU','SDPC','SDRA','SGRO','SHID','SIDO','SILO',
+  'SIMA','SIMP','SIPD','SKBM','SKLT','SKYB','SMAR','SMBR','SMCB','SMDM','SMDR','SMGR',
+  'SMMA','SMMT','SMRA','SMRU','SMSM','SOCI','SONA','SPMA','SQMI','SRAJ','SRIL','SRSN',
+  'SRTG','SSIA','SSMS','SSTM','STAR','STTP','SUGI','SULI','SUPR','TALF','TARA','TAXI',
+  'TBIG','TBLA','TBMS','TCID','TELE','TFCO','TGKA','TIFA','TINS','TIRA','TIRT','TKIM',
+  'TLKM','TMAS','TMPO','TOBA','TOTL','TOTO','TOWR','TPIA','TPMA','TRAM','TRIL','TRIM',
+  'TRIO','TRIS','TRST','TRUS','TSPC','ULTJ','UNIC','UNIT','UNSP','UNTR','UNVR','VICO',
+  'VINS','VIVA','VOKS','VRNA','WAPO','WEHA','WICO','WIIM','WIKA','WINS','WOMF','WSKT',
+  'WTON','YPAS','YULE','ZBRA','SHIP','CASA','DAYA','DPUM','IDPR','JGLE','KINO','MARI',
+  'MKNT','MTRA','OASA','POWR','INCF','WSBP','PBSA','PRDA','BOGA','BRIS','PORT','CARS',
+  'MINA','CLEO','TAMU','CSIS','TGRA','FIRE','TOPS','KMTR','ARMY','MAPB','WOOD','HRTA',
+  'MABA','HOKI','MPOW','MARK','NASA','MDKI','BELL','KIOS','GMFI','MTWI','ZINC','MCAS',
+  'PPRE','WEGE','PSSI','MORA','DWGL','PBID','JMAS','CAMP','IPCM','PCAR','LCKM','BOSS',
+  'HELI','JSKY','INPS','GHON','TDPM','DFAM','NICK','BTPS','SPTO','PRIM','HEAL','TRUK',
+  'PZZA','TUGU','MSIN','SWAT','TNCA','MAPA','TCPI','IPCC','RISE','BPTR','POLL','NFCX',
+  'MGRO','NUSA','FILM','ANDI','LAND','MOLI','PANI','DIGI','CITY','SAPX','SURE','HKMU',
+  'MPRO','DUCK','GOOD','SKRN','YELO','CAKK','SATU','SOSS','DEAL','POLA','DIVA','LUCK',
+  'URBN','SOTS','ZONE','PEHA','FOOD','BEEF','POLI','CLAY','NATO','JAYA','COCO','MTPS',
+  'CPRI','HRME','POSA','JAST','FITT','BOLA','CCSI','SFAN','POLU','KJEN','KAYU','ITIC',
+  'PAMG','IPTV','BLUE','ENVY','EAST','LIFE','FUJI','KOTA','INOV','ARKA','SMKL','HDIT',
+  'KEEN','BAPI','TFAS','GGRP','OPMS','NZIA','SLIS','PURE','IRRA','DMMX','SINI','WOWS',
+  'ESIP','TEBE','KEJU','PSGO','AGAR','IFSH','REAL','IFII','PMJS','UCID','GLVA','PGJO',
+  'AMAR','CSRA','INDO','AMOR','TRIN','DMND','PURA','PTPW','TAMA','IKAN','SAMF','SBAT',
+  'KBAG','CBMF','RONY','CSMI','BBSS','BHAT','CASH','TECH','EPAC','UANG','PGUN','SOFA',
+  'PPGL','TOYS','SGER','TRJA','PNGO','SCNP','BBSI','KMDS','PURI','SOHO','HOMI','ROCK',
+  'ENZO','PLAN','PTDU','ATAP','VICI','PMMP','BANK','WMUU','EDGE','UNIQ','BEBS','SNLK',
+  'ZYRX','LFLO','FIMP','TAPG','NPGF','LUCY','ADCP','HOPE','MGLV','TRUE','LABA','ARCI',
+  'IPAC','MASB','BMHS','FLMC','NICL','UVCR','BUKA','HAIS','OILS','GPSO','MCOL','RSGK',
+  'RUNS','SBMA','CMNT','GTSI','IDEA','KUAS','BOBA','MTEL','DEPO','BINO','CMRY','WGSH',
+  'TAYS','WMPP','RMKE','OBMD','AVIA','IPPE','NASI','BSML','DRMA','ADMR','SEMA','ASLC',
+  'NETV','BAUT','ENAK','NTBK','SMKM','STAA','NANO','BIKE','WIRG','SICO','GOTO','TLDN',
+  'MTMH','WINR','IBOS','OLIV','ASHA','SWID','TRGU','ARKO','CHEM','DEWI','AXIO','KRYA',
+  'HATM','RCCC','GULA','JARR','AMMS','RAFI','KKES','ELPI','EURO','KLIN','TOOL','BUAH',
+  'CRAB','MEDS','COAL','PRAY','CBUT','BELI','MKTR','OMED','BSBK','PDPP','KDTN','ZATA',
+  'NINE','MMIX','PADA','ISAP','VTNY','SOUL','ELIT','BEER','CBPE','SUNI','CBRE','WINE',
+  'BMBL','PEVE','LAJU','FWCT','NAYZ','IRSX','PACK','VAST','CHIP','HALO','KING','PGEO',
+  'FUTR','HILL','BDKR','PTMP','SAGE','TRON','CUAN','NSSS','GTRA','HAJJ','JATI','TYRE',
+  'MPXL','SMIL','KLAS','MAXI','VKTR','RELF','AMMN','CRSN','GRPM','WIDI','TGUK','INET',
+  'MAHA','RMKO','CNMA','FOLK','HBAT','GRIA','PPRI','ERAL','CYBR','MUTU','LMAX','HUMI',
+  'MSIE','RSCH','BABY','AEGS','IOTF','KOCI','PTPS','BREN','STRK','KOKA','LOPI','UDNG',
+  'RGAS','MSTI','IKPM','AYAM','SURI','ASLI','GRPH','SMGA','UNTD','TOSK','MPIX','ALII',
+  'MKAP','MEJA','LIVE','HYGN','BAIK','VISI','AREA','MHKI','ATLA','DATA','SOLA','BATR',
+  'SPRE','PART','GOLF','ISEA','BLES','GUNA','LABS','DOSS','NEST','PTMR','VERN','DAAZ',
+  'BOAT','NAIK','AADI','MDIY','KSIX','RATU','YOII','HGII','BRRC','DGWG','CBDK','OBAT',
+  'MINE','ASPR','PSAT','COIN','CDIA','BLOG','MERI','KAQI','YUPI','FORE','MDLA','DKHH',
+  'AYLS','DADA','ASPI','ESTA','BESS','AMAN','CARE','PIPA','NCKL','MENN','AWAN','MBMA',
+  'RAAM','DOOH','CGAS','NICE','MSJA','SMLE','ACRO','MANG','WIFI','FAPA','DCII','KETR',
+  'DGNS','UFOE','CHEK','PMUI','EMAS','PJHB','RLCO','SUPA','WBSA','ADMF','ADMG','ADRO',
+  'AGII','AGRO','AGRS','AHAP','AIMS','PNSE','POLY','POOL','PPRO',
 ];
 
 /**
- * Discover the full IDX ticker list from stockanalysis.com.
- * Returns an array of bare symbols (no .JK), or null if discovery fails / is blocked.
- */
-export async function discoverTickers() {
-  try {
-    const tickers = [];
-    for (let page = 1; page <= 3; page++) {
-      const url = page === 1
-        ? 'https://stockanalysis.com/list/indonesia-stock-exchange/'
-        : `https://stockanalysis.com/list/indonesia-stock-exchange/?p=${page}`;
-
-      const res = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!res.ok) break;
-
-      const html = await res.text();
-      for (const m of html.matchAll(/href="\/quote\/idx\/([^/]+)\//g)) {
-        const ticker = m[1];
-        if (ticker.length >= 3 && ticker.length <= 5 && /^[A-Z0-9]+$/.test(ticker)) {
-          tickers.push(ticker);
-        }
-      }
-      if (page < 3) await new Promise(r => setTimeout(r, 500));
-    }
-
-    const unique = [...new Set(tickers)];
-    console.log(`Discovered ${unique.length} IDX tickers from stockanalysis.com`);
-    // Guard: if the site is blocked / layout changed we get too few — fall back.
-    return unique.length > 100 ? unique : null;
-  } catch (err) {
-    console.error('Ticker discovery failed:', err.message?.substring(0, 100));
-    return null;
-  }
-}
-
-/**
- * Breadth universe — the discovered full IDX list, or the liquid fallback.
+ * Breadth universe — the full IDX listing, suffixed with .JK for Yahoo.
  */
 export async function getAllTickers() {
-  const discovered = await discoverTickers();
-  const base = discovered || FALLBACK_TICKERS;
-  if (!discovered) console.log(`Using fallback universe: ${FALLBACK_TICKERS.length} tickers`);
-  return base.map(t => t + '.JK');
+  return IDX_TICKERS.map(t => t + '.JK');
 }
 
+// Kept for backward compatibility / tests.
+const FALLBACK_TICKERS = IDX_TICKERS;
 export { FALLBACK_TICKERS };

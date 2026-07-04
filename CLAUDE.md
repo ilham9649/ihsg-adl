@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Serverless IHSG (Jakarta Composite Index) market breadth dashboard. Tracks ~500 IDX stocks daily, calculating **% Advancing**, A/D Ratio, Spread, and McClellan Oscillator.
+Serverless IHSG (Jakarta Composite Index) market breadth dashboard. Tracks the **full IDX listing (~957 stocks, all boards)** daily, calculating **% Advancing** (20/100/200-day MAs), A/D Ratio, Spread, and McClellan Oscillator.
 
 > **Headline breadth = % Advancing, NOT the cumulative A/D Line.** A raw cumulative A/D Line (running sum of advances−declines) is not a mean-reverting oscillator: over 2023–2026 it drifts down ~1.5k on the liquid set and ~16k on the broad ~500 universe, because Indonesia's equal-weight breadth was persistently negative while the cap-weighted IHSG was held up by a few mega-caps. This is **genuine breadth, not a computation bug** — verified: switching raw→adjusted close removes only ~5–11% of the drift, and a volume/forward-fill filter removes ~0%. So the dashboard leads with `pctAdvancing` = advances/(advances+declines)×100, which oscillates around 50%. `adLine` is still computed and stored as a raw datum (and its cumulative invariant is unit-tested) but is not charted. See `computeSeries` in `backend/scrapers/yahoo.js`.
 
@@ -55,16 +55,16 @@ The Lambda handler (`backend/index.js`) supports both REST API v1 and HTTP API v
 
 Frontend (`frontend/app.js`) handles both formats when parsing API responses.
 
-### Ticker Discovery
-`backend/lib/tickers.js` fetches the full IDX universe from stockanalysis.com (3 pages, ~500 tickers) for genuine market breadth. Falls back to a hardcoded list of ~44 liquid LQ45-style stocks (`FALLBACK_TICKERS`) if discovery fails (site blocked / layout change → fewer than 100 matches). All tickers are suffixed with `.JK` for Yahoo Finance.
+### Ticker Universe
+`backend/lib/tickers.js` hardcodes the **complete IDX securities list (~957 tickers, all boards: Main/Development/Acceleration/Watchlist)**, scraped from the IDX official API (`idx.co.id` `GetSecuritiesStock`). It's hardcoded because IDX's API blocks server-side fetches (Cloudflare/403) and stockanalysis.com's free list caps at 500 — so live discovery from Lambda isn't possible. **Re-scrape periodically** to pick up new IPOs (drive `idx.co.id/en/market-data/stocks-data/stock-list` in a browser and fetch its API in-page). Many small/suspended names have no usable Yahoo data — `fetchQuotes` returns `[]` for those and they're excluded from the daily counts (~750-850 of 957 typically usable). All tickers suffixed `.JK`.
 
-> **Refresh duration vs. API Gateway 29s limit:** a ~500-ticker scrape takes several minutes (batches of 3, 2s apart). The scheduled EventBridge run invokes the Lambda directly, so it's only bounded by the Lambda timeout (ensure it's set high, e.g. 10 min). The manual `POST /api/ad/refresh` **Refresh** button goes through API Gateway, which caps at ~29s — so the button will return a 504 for the broad universe even though the Lambda keeps running and still writes the data. Treat the daily cron as the source of truth.
+> **Refresh scale & API Gateway 29s limit:** a ~957-ticker × 7.5-year scrape takes several minutes (batches of 6, 1.5s apart; daily counts folded incrementally to bound memory). The scheduled EventBridge run invokes the Lambda directly, bounded only by the Lambda timeout (900s — keep it there). The manual `POST /api/ad/refresh` **Refresh** button goes through API Gateway (~29s cap) so it returns 504 even though the Lambda keeps running and still writes the data. Treat the daily cron as the source of truth; big repopulations can be run locally against the prod table.
 
 ### Yahoo Finance Scraper
 Uses Yahoo Finance v8 chart API directly (`/v8/finance/chart/{ticker}`) — no external library dependency. Rate limited by:
-- Processing in batches of 3 tickers in parallel
-- 2-second delay between batches
-- Processes ~500 tickers in ~5-6 minutes
+- Processing in batches of 6 tickers in parallel
+- 1.5-second delay between batches
+- Processes ~957 tickers in ~5-8 minutes (no-data micro-caps 404 fast, so failures don't slow it much)
 
 ### DynamoDB Pattern
 Table: `ihsg-adl` (or `TABLE_NAME` env var). Primary key is `date` (string S). Stores aggregated daily metrics, not per-ticker data. `BatchWriteItem` chunks at 25 items max.
