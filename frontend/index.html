@@ -18,7 +18,7 @@
     <div class="edition">
       <span>Jakarta Composite Index</span>
       <span class="edition-mark">❖</span>
-      <span>~500 Constituents</span>
+      <span><span id="universe-count">~500</span> Constituents Counted</span>
     </div>
 
     <h1 class="masthead-title">The Breadth Ledger</h1>
@@ -115,6 +115,12 @@
         <span class="figure-no">Fig. II</span>
         <h2>The Breadth Line</h2>
         <span class="figure-cap">% Advancing · 20 / 100 / 200-day moving averages · 50% neutral</span>
+      </div>
+      <div class="ma-checklist" id="ma-checklist" role="group" aria-label="Toggle lines">
+        <label class="ma-check up"><input type="checkbox" data-key="pctAdvancingMA" checked> 20-day</label>
+        <label class="ma-check gold"><input type="checkbox" data-key="pctAdvancingMA100" checked> 100-day</label>
+        <label class="ma-check slate"><input type="checkbox" data-key="pctAdvancingMA200" checked> 200-day</label>
+        <label class="ma-check faint"><input type="checkbox" data-key="daily" checked> daily</label>
       </div>
       <div class="breadth-frame">
         <canvas id="adline-chart"></canvas>

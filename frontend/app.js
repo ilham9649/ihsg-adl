@@ -96,8 +96,19 @@ function linkChartJs(chart) {
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('range-select').addEventListener('change', () => renderAll());
   document.getElementById('refresh-btn').addEventListener('click', refreshData);
+  document.querySelectorAll('#ma-checklist input[type=checkbox]')
+    .forEach(cb => cb.addEventListener('change', applyMaToggles));
   fetchData();
 });
+
+// Show/hide breadth lines from the checklist (unchecked → hidden key).
+function applyMaToggles() {
+  if (!adlineChart) return;
+  const hidden = new Set();
+  document.querySelectorAll('#ma-checklist input[type=checkbox]')
+    .forEach(cb => { if (!cb.checked) hidden.add(cb.dataset.key); });
+  adlineChart.setHidden(hidden);
+}
 
 // ── Fetch ──
 async function fetchData() {
@@ -253,6 +264,11 @@ function renderCards(data) {
   if (heroMa && latest.pctAdvancingMA != null) {
     heroMa.textContent = latest.pctAdvancingMA.toFixed(1) + '%';
   }
+
+  // Constituents actually counted in the latest session (transparency: the full
+  // discovered IDX universe, minus any that didn't trade / lacked a prior close).
+  const universe = document.getElementById('universe-count');
+  if (universe) universe.textContent = latest.advances + latest.declines + latest.unchanged;
 
   document.getElementById('advances').textContent = latest.advances;
   document.getElementById('declines').textContent = latest.declines;

@@ -27,6 +27,7 @@
       this.unit = opts.unit || '';
       // extra moving-average lines: [{ field, color, width, label, legend }]
       this.overlays = opts.overlays || [];
+      this.hidden = new Set(); // line keys (field names, or 'daily') toggled off
       this.data = [];
       this.dpr = Math.max(1, window.devicePixelRatio || 1);
       this.hover = -1;
@@ -203,32 +204,30 @@
     _drawSeries(rows, p) {
       const ctx = this.ctx;
       const n = rows.length;
-      const field = this.field, ref = this.ref;
-      const vals = rows.map(r => r[field]).filter(v => v != null);
-      if (vals.length < 2) { this._drawGrid(p); this._drawXAxis(p, n); return; }
-      // Keep the reference line (e.g. 50%) inside the visible range.
-      let dMin = Math.min(...vals), dMax = Math.max(...vals);
-      if (ref != null) { dMin = Math.min(dMin, ref); dMax = Math.max(dMax, ref); }
-      // Widen the domain to fit the daily values too, so they're not clipped off
-      // the top/bottom. Use robust 3rd–97th percentiles so one extreme session
-      // doesn't flatten the smoothed line.
-      if (this.rawField) {
+      const field = this.field, ref = this.ref, hidden = this.hidden;
+      const mainVis = !hidden.has(field);
+      const dailyVis = !!this.rawField && !hidden.has('daily');
+      const visOverlays = this.overlays.filter(o => !hidden.has(o.field));
+
+      // Domain from the VISIBLE lines only, so toggling a line off zooms in.
+      let dMin = Infinity, dMax = -Infinity;
+      const inc = (v) => { if (v == null) return; if (v < dMin) dMin = v; if (v > dMax) dMax = v; };
+      if (mainVis) for (let i = 0; i < n; i++) inc(rows[i][field]);
+      for (const ov of visOverlays) for (let i = 0; i < n; i++) inc(rows[i][ov.field]);
+      if (dailyVis) {
+        // Robust 3rd–97th percentiles so one extreme session doesn't flatten it.
         const raws = rows.map(r => r[this.rawField]).filter(v => v != null).sort((a, b) => a - b);
         if (raws.length) {
           const q = (t) => raws[Math.min(raws.length - 1, Math.max(0, Math.round(t * (raws.length - 1))))];
-          dMin = Math.min(dMin, q(0.03));
-          dMax = Math.max(dMax, q(0.97));
+          inc(q(0.03)); inc(q(0.97));
         }
       }
-      // Include the overlay MA lines in the domain so none clip.
-      for (const ov of this.overlays) {
-        for (let i = 0; i < n; i++) {
-          const v = rows[i][ov.field];
-          if (v == null) continue;
-          if (v < dMin) dMin = v;
-          if (v > dMax) dMax = v;
-        }
-      }
+      if (ref != null) inc(ref);
+
+      this._drawGrid(p);
+      if (dMin === Infinity) { this._drawXAxis(p, n); return; } // everything toggled off
+      if (dMin === dMax) { dMin -= 1; dMax += 1; }
+
       const scale = this._scale(dMin, dMax, p.h);
       this._sy = (v) => p.y + scale.y(v); // value→pixel, reused by the crosshair markers
       const lastVal = rows[rows.length - 1][field];
@@ -236,23 +235,27 @@
       const stroke = above ? this.col.up : this.col.down;
       const fill = above ? this.col.fill : this.col.fillDown;
 
-      this._drawGrid(p);
-      const pts = [];
-      for (let i = 0; i < n; i++) {
-        if (rows[i][field] == null) continue;
-        pts.push([this._xAt(i, n, p), p.y + scale.y(rows[i][field])]);
+      // main line + area (anchored to the reference line, else the axis floor)
+      if (mainVis) {
+        const pts = [];
+        for (let i = 0; i < n; i++) {
+          if (rows[i][field] == null) continue;
+          pts.push([this._xAt(i, n, p), p.y + scale.y(rows[i][field])]);
+        }
+        if (pts.length) {
+          const baseY = p.y + (ref != null ? scale.y(ref) : p.h);
+          ctx.beginPath(); ctx.moveTo(pts[0][0], baseY);
+          for (const [x, y] of pts) ctx.lineTo(x, y);
+          ctx.lineTo(pts[pts.length - 1][0], baseY); ctx.closePath();
+          ctx.fillStyle = fill; ctx.fill();
+          ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+          for (const [x, y] of pts) ctx.lineTo(x, y);
+          ctx.strokeStyle = stroke; ctx.lineWidth = 1.8; ctx.stroke();
+        }
       }
-      // area (anchored to the reference line when we have one, else the axis floor)
-      const baseY = p.y + (ref != null ? scale.y(ref) : p.h);
-      ctx.beginPath(); ctx.moveTo(pts[0][0], baseY);
-      for (const [x, y] of pts) ctx.lineTo(x, y);
-      ctx.lineTo(pts[pts.length - 1][0], baseY); ctx.closePath();
-      ctx.fillStyle = fill; ctx.fill();
-      // Faint unsmoothed "daily" values behind the average, clipped to the plot.
-      // A dot per session — a light volatility cloud on long ranges — plus a
-      // connecting thread on shorter ranges. Always visible, at every zoom, so
-      // the "daily" figure in the tooltip always has something to point at.
-      if (this.rawField) {
+      // Faint unsmoothed "daily" values: a dot per session (a volatility cloud on
+      // long ranges) plus a connecting thread on shorter ones. Clipped to plot.
+      if (dailyVis) {
         ctx.save();
         ctx.beginPath(); ctx.rect(p.x, p.y, p.w, p.h); ctx.clip();
         if (n <= 90) {
@@ -275,12 +278,8 @@
         }
         ctx.restore();
       }
-      // line
-      ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
-      for (const [x, y] of pts) ctx.lineTo(x, y);
-      ctx.strokeStyle = stroke; ctx.lineWidth = 1.8; ctx.stroke();
       // overlay moving-average lines (e.g. 100-day, 200-day)
-      for (const ov of this.overlays) {
+      for (const ov of visOverlays) {
         ctx.beginPath();
         let started = false;
         for (let i = 0; i < n; i++) {
@@ -307,14 +306,16 @@
         ctx.fillText(this._fmt(t) + this.unit, p.x + p.w + 6, y);
       }
       this._drawXAxis(p, n);
-      this._drawSeriesLegend(p, stroke);
+      this._drawSeriesLegend(p, stroke, mainVis, visOverlays);
     }
 
-    // Compact legend (colored swatch + short label) for the main line + overlays.
-    _drawSeriesLegend(p, mainColor) {
+    // Compact legend (colored swatch + short label) for the visible lines only.
+    _drawSeriesLegend(p, mainColor, mainVis, visOverlays) {
       const ctx = this.ctx;
-      const items = [{ color: mainColor, label: this.legendLabel }]
-        .concat(this.overlays.map(o => ({ color: o.color, label: o.legend || o.label })));
+      const items = [];
+      if (mainVis) items.push({ color: mainColor, label: this.legendLabel });
+      for (const o of visOverlays) items.push({ color: o.color, label: o.legend || o.label });
+      if (!items.length) return;
       ctx.font = '600 10px JetBrains Mono, monospace';
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       let lx = p.x + 4; const ly = p.y + 8;
@@ -341,17 +342,17 @@
       // ring) at the hovered date, so both tooltip figures are locatable.
       if (this.panel !== 'price' && this._sy) {
         const sv = r[this.field];
-        if (sv != null) {
+        if (sv != null && !this.hidden.has(this.field)) {
           const above = this.ref != null ? (rows[rows.length - 1][this.field] >= this.ref) : (sv >= 0);
           ctx.beginPath(); ctx.arc(x, this._sy(sv), 3.4, 0, Math.PI * 2);
           ctx.fillStyle = above ? this.col.up : this.col.down; ctx.fill();
         }
         for (const ov of this.overlays) {
-          if (r[ov.field] == null) continue;
+          if (r[ov.field] == null || this.hidden.has(ov.field)) continue;
           ctx.beginPath(); ctx.arc(x, this._sy(r[ov.field]), 2.6, 0, Math.PI * 2);
           ctx.fillStyle = ov.color; ctx.fill();
         }
-        if (this.rawField && r[this.rawField] != null) {
+        if (this.rawField && r[this.rawField] != null && !this.hidden.has('daily')) {
           ctx.beginPath(); ctx.arc(x, this._sy(r[this.rawField]), 3, 0, Math.PI * 2);
           ctx.fillStyle = this.col.bg; ctx.fill();
           ctx.strokeStyle = 'rgba(29,24,19,0.6)'; ctx.lineWidth = 1.3; ctx.stroke();
@@ -390,14 +391,16 @@
       } else {
         const val = r[this.field];
         const above = this.ref != null ? (val >= this.ref) : (val >= 0);
-        const row = el('div', 'bc-row');
-        row.appendChild(el('span', null, this.tipLabel));
-        const b = el('b', null, fmt(val, this.unit === '%' ? 1 : 0) + this.unit);
-        b.style.color = above ? this.col.up : this.col.down;
-        row.appendChild(b);
-        tip.appendChild(row);
+        if (val != null && !this.hidden.has(this.field)) {
+          const row = el('div', 'bc-row');
+          row.appendChild(el('span', null, this.tipLabel));
+          const b = el('b', null, fmt(val, this.unit === '%' ? 1 : 0) + this.unit);
+          b.style.color = above ? this.col.up : this.col.down;
+          row.appendChild(b);
+          tip.appendChild(row);
+        }
         for (const ov of this.overlays) {
-          if (r[ov.field] == null) continue;
+          if (r[ov.field] == null || this.hidden.has(ov.field)) continue;
           const orow = el('div', 'bc-row');
           orow.appendChild(el('span', null, ov.label));
           const ob = el('b', null, fmt(r[ov.field], this.unit === '%' ? 1 : 0) + this.unit);
@@ -405,7 +408,7 @@
           orow.appendChild(ob);
           tip.appendChild(orow);
         }
-        if (this.rawField && r[this.rawField] != null) {
+        if (this.rawField && r[this.rawField] != null && !this.hidden.has('daily')) {
           const rw = el('div', 'bc-row');
           rw.appendChild(el('span', null, 'daily'));
           rw.appendChild(el('b', null, fmt(r[this.rawField], 1) + this.unit));
@@ -456,6 +459,13 @@
     clearHover() {
       this.hover = -1;
       if (this.tooltip) this.tooltip.style.display = 'none';
+      this._draw();
+    }
+
+    // Toggle which lines are drawn (keys: main field name, overlay field names,
+    // or 'daily'). The y-scale re-fits to whatever remains visible.
+    setHidden(keys) {
+      this.hidden = keys instanceof Set ? keys : new Set(keys || []);
       this._draw();
     }
   }

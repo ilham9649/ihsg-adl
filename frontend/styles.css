@@ -302,6 +302,60 @@ main { max-width: var(--maxw); margin: 0 auto; }
   margin-left: auto;
 }
 
+/* MA line toggle checklist */
+.ma-checklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: -6px 0 16px;
+}
+.ma-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: .7rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  cursor: pointer;
+  user-select: none;
+  padding-left: 14px;
+  position: relative;
+}
+/* color tab in front of each label, matching the line colour */
+.ma-check::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 50%;
+  transform: translateY(-50%);
+  width: 9px; height: 3px;
+}
+.ma-check.up::before    { background: var(--up); }
+.ma-check.gold::before  { background: var(--gold); }
+.ma-check.slate::before { background: #3f5170; }
+.ma-check.faint::before { background: var(--ink-faint); }
+.ma-check input {
+  appearance: none;
+  width: 13px; height: 13px;
+  border: 1.5px solid var(--ink-faint);
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  flex: none;
+}
+.ma-check input:checked { background: var(--ink); border-color: var(--ink); }
+.ma-check input:checked::after {
+  content: '';
+  position: absolute;
+  left: 3px; top: 0px;
+  width: 4px; height: 8px;
+  border: solid var(--paper);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.ma-check:has(input:not(:checked)) { color: var(--ink-faint); opacity: .6; }
+
 .breadth-frame { position: relative; height: 360px; }
 .breadth-frame canvas { width: 100% !important; height: 100% !important; display: block; }
 /* Chart.js panels get their own boxed height so the section heading is never
