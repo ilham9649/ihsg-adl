@@ -9,22 +9,27 @@ const API_BASE = window.location.origin;
 // Computed over the FULL series (not the sliced range) so the visible window has
 // no warmup gap. Tune the window here.
 const PCT_SMOOTH_WINDOW = 20;
+// Moving averages of % Advancing drawn on the breadth line (data field → window).
+const PCT_MAS = { pctAdvancingMA: 20, pctAdvancingMA100: 100, pctAdvancingMA200: 200 };
 
 let allData = [];
 let charts = {};
 let ihsgChart = null;
 let adlineChart = null;
 
-// Attach pctAdvancingMA = trailing SMA of pctAdvancing over PCT_SMOOTH_WINDOW days.
-// Uses whatever prior values exist (shorter window at the very start → no gaps).
-function attachPctSmoothing(rows, window) {
+// Attach a trailing SMA of pctAdvancing for each window, computed over the FULL
+// series (so the visible range has no warmup gap). Uses whatever prior values
+// exist (shorter effective window at the very start → no gaps).
+function attachPctSmoothing(rows) {
   const vals = rows.map(r => (r.pctAdvancing != null ? r.pctAdvancing : null));
-  for (let i = 0; i < rows.length; i++) {
-    let sum = 0, cnt = 0;
-    for (let k = Math.max(0, i - window + 1); k <= i; k++) {
-      if (vals[k] != null) { sum += vals[k]; cnt++; }
+  for (const [field, window] of Object.entries(PCT_MAS)) {
+    for (let i = 0; i < rows.length; i++) {
+      let sum = 0, cnt = 0;
+      for (let k = Math.max(0, i - window + 1); k <= i; k++) {
+        if (vals[k] != null) { sum += vals[k]; cnt++; }
+      }
+      rows[i][field] = cnt ? parseFloat((sum / cnt).toFixed(2)) : null;
     }
-    rows[i].pctAdvancingMA = cnt ? parseFloat((sum / cnt).toFixed(2)) : null;
   }
 }
 
@@ -117,7 +122,7 @@ async function fetchData() {
 
     if (data.success && data.data && data.data.length > 0) {
       allData = data.data;
-      attachPctSmoothing(allData, PCT_SMOOTH_WINDOW);
+      attachPctSmoothing(allData);
       document.getElementById('last-updated').textContent = `Last: ${allData[allData.length - 1].date}`;
       renderAll();
     } else {
@@ -214,8 +219,12 @@ function renderBreadth(data) {
   if (ac && at) {
     if (!adlineChart) adlineChart = new BreadthChart(ac, at, {
       panel: 'series', field: 'pctAdvancingMA', rawField: 'pctAdvancing',
-      label: `% ADVANCING · ${PCT_SMOOTH_WINDOW}D AVG`,
-      tipLabel: `${PCT_SMOOTH_WINDOW}-day avg`, ref: 50, unit: '%',
+      label: '% ADVANCING', tipLabel: `${PCT_SMOOTH_WINDOW}-day avg`,
+      legendLabel: `${PCT_SMOOTH_WINDOW}d`, ref: 50, unit: '%',
+      overlays: [
+        { field: 'pctAdvancingMA100', color: '#a67a26', width: 1.4, label: '100-day', legend: '100d' },
+        { field: 'pctAdvancingMA200', color: '#3f5170', width: 1.6, label: '200-day', legend: '200d' },
+      ],
     });
     adlineChart.setData(data);
     linkBreadth(adlineChart);

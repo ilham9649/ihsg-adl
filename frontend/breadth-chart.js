@@ -22,8 +22,11 @@
       this.rawField = opts.rawField || null; // optional faint underlay (unsmoothed)
       this.label = opts.label || '% ADVANCING';       // on-canvas panel label
       this.tipLabel = opts.tipLabel || this.label;     // short label used in the tooltip
+      this.legendLabel = opts.legendLabel || this.tipLabel; // legend swatch label
       this.ref = (opts.ref != null) ? opts.ref : null; // neutral/reference line (e.g. 50)
       this.unit = opts.unit || '';
+      // extra moving-average lines: [{ field, color, width, label, legend }]
+      this.overlays = opts.overlays || [];
       this.data = [];
       this.dpr = Math.max(1, window.devicePixelRatio || 1);
       this.hover = -1;
@@ -217,6 +220,15 @@
           dMax = Math.max(dMax, q(0.97));
         }
       }
+      // Include the overlay MA lines in the domain so none clip.
+      for (const ov of this.overlays) {
+        for (let i = 0; i < n; i++) {
+          const v = rows[i][ov.field];
+          if (v == null) continue;
+          if (v < dMin) dMin = v;
+          if (v > dMax) dMax = v;
+        }
+      }
       const scale = this._scale(dMin, dMax, p.h);
       this._sy = (v) => p.y + scale.y(v); // value→pixel, reused by the crosshair markers
       const lastVal = rows[rows.length - 1][field];
@@ -267,6 +279,18 @@
       ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
       for (const [x, y] of pts) ctx.lineTo(x, y);
       ctx.strokeStyle = stroke; ctx.lineWidth = 1.8; ctx.stroke();
+      // overlay moving-average lines (e.g. 100-day, 200-day)
+      for (const ov of this.overlays) {
+        ctx.beginPath();
+        let started = false;
+        for (let i = 0; i < n; i++) {
+          const v = rows[i][ov.field];
+          if (v == null) { started = false; continue; }
+          const ox = this._xAt(i, n, p), oy = p.y + scale.y(v);
+          if (!started) { ctx.moveTo(ox, oy); started = true; } else ctx.lineTo(ox, oy);
+        }
+        ctx.strokeStyle = ov.color; ctx.lineWidth = ov.width || 1.4; ctx.stroke();
+      }
       // reference / neutral line
       const refVal = ref != null ? ref : ((scale.lo < 0 && scale.hi > 0) ? 0 : null);
       if (refVal != null) {
@@ -283,9 +307,25 @@
         ctx.fillText(this._fmt(t) + this.unit, p.x + p.w + 6, y);
       }
       this._drawXAxis(p, n);
-      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      ctx.fillStyle = this.col.axis; ctx.font = '600 10px JetBrains Mono, monospace';
-      ctx.fillText(this.label, p.x + 4, p.y + 2);
+      this._drawSeriesLegend(p, stroke);
+    }
+
+    // Compact legend (colored swatch + short label) for the main line + overlays.
+    _drawSeriesLegend(p, mainColor) {
+      const ctx = this.ctx;
+      const items = [{ color: mainColor, label: this.legendLabel }]
+        .concat(this.overlays.map(o => ({ color: o.color, label: o.legend || o.label })));
+      ctx.font = '600 10px JetBrains Mono, monospace';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      let lx = p.x + 4; const ly = p.y + 8;
+      for (const it of items) {
+        ctx.strokeStyle = it.color; ctx.lineWidth = 2.4;
+        ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx + 13, ly); ctx.stroke();
+        lx += 17;
+        ctx.fillStyle = this.col.text;
+        ctx.fillText(it.label, lx, ly);
+        lx += ctx.measureText(it.label).width + 12;
+      }
     }
 
     _drawCrosshair(rows, p) {
@@ -305,6 +345,11 @@
           const above = this.ref != null ? (rows[rows.length - 1][this.field] >= this.ref) : (sv >= 0);
           ctx.beginPath(); ctx.arc(x, this._sy(sv), 3.4, 0, Math.PI * 2);
           ctx.fillStyle = above ? this.col.up : this.col.down; ctx.fill();
+        }
+        for (const ov of this.overlays) {
+          if (r[ov.field] == null) continue;
+          ctx.beginPath(); ctx.arc(x, this._sy(r[ov.field]), 2.6, 0, Math.PI * 2);
+          ctx.fillStyle = ov.color; ctx.fill();
         }
         if (this.rawField && r[this.rawField] != null) {
           ctx.beginPath(); ctx.arc(x, this._sy(r[this.rawField]), 3, 0, Math.PI * 2);
@@ -351,6 +396,15 @@
         b.style.color = above ? this.col.up : this.col.down;
         row.appendChild(b);
         tip.appendChild(row);
+        for (const ov of this.overlays) {
+          if (r[ov.field] == null) continue;
+          const orow = el('div', 'bc-row');
+          orow.appendChild(el('span', null, ov.label));
+          const ob = el('b', null, fmt(r[ov.field], this.unit === '%' ? 1 : 0) + this.unit);
+          ob.style.color = ov.color;
+          orow.appendChild(ob);
+          tip.appendChild(orow);
+        }
         if (this.rawField && r[this.rawField] != null) {
           const rw = el('div', 'bc-row');
           rw.appendChild(el('span', null, 'daily'));
