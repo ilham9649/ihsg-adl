@@ -28,11 +28,64 @@ function attachPctSmoothing(rows, window) {
   }
 }
 
+// ── Palette (paper broadsheet) ──
+const INK = '#1d1813', PAPER = '#f2ebdd', GOLD = '#a67a26';
+const UP = '#2f6b4f', DOWN = '#b0392c';
+const UP_BAR = 'rgba(47,107,79,0.72)', DOWN_BAR = 'rgba(176,57,44,0.72)';
+const GRID = 'rgba(29,24,19,0.06)';
+const TIP = { backgroundColor: INK, titleColor: PAPER, bodyColor: PAPER, borderColor: GOLD, borderWidth: 1, cornerRadius: 0, padding: 10, titleFont: { family: "'JetBrains Mono', monospace" }, bodyFont: { family: "'JetBrains Mono', monospace" } };
+
 // ── Chart defaults ──
-Chart.defaults.color = '#8899aa';
-Chart.defaults.borderColor = 'rgba(255,255,255,0.05)';
-Chart.defaults.font.family = "'Inter', sans-serif";
-Chart.defaults.font.size = 12;
+Chart.defaults.color = '#5b5147';
+Chart.defaults.borderColor = GRID;
+Chart.defaults.font.family = "'JetBrains Mono', monospace";
+Chart.defaults.font.size = 11;
+
+// ── Cross-chart hover sync ──
+// Every panel shares the same filtered data array, so a hovered position maps to
+// the same index everywhere. Hovering one chart highlights that date in all the
+// others. Subscribers are rebuilt on each renderAll (Chart.js charts are
+// recreated), so we reset the list there.
+const HoverSync = {
+  subs: [],
+  reset() { this.subs = []; },
+  register(sub) { this.subs.push(sub); return sub; },
+  emit(i, src) { for (const s of this.subs) if (s !== src) s.show(i); },
+  clear(src) { for (const s of this.subs) if (s !== src) s.hide(); },
+};
+
+// Link a custom BreadthChart into the sync bus.
+function linkBreadth(bc) {
+  const sub = { show: (i) => bc.setHover(i), hide: () => bc.clearHover() };
+  HoverSync.register(sub);
+  bc.onHover = (i) => HoverSync.emit(i, sub);
+  bc.onLeave = () => HoverSync.clear(sub);
+}
+
+// Link a Chart.js chart into the sync bus (programmatic tooltip + active element).
+function linkChartJs(chart) {
+  const sub = {
+    show: (i) => {
+      if (chart._syncIdx === i) return;
+      const el = chart.getDatasetMeta(0)?.data?.[i];
+      if (!el) return;
+      chart._syncIdx = i;
+      chart.setActiveElements([{ datasetIndex: 0, index: i }]);
+      chart.tooltip.setActiveElements([{ datasetIndex: 0, index: i }], { x: el.x, y: el.y });
+      chart.update('none');
+    },
+    hide: () => {
+      if (chart._syncIdx == null) return;
+      chart._syncIdx = null;
+      chart.setActiveElements([]);
+      chart.tooltip.setActiveElements([], { x: 0, y: 0 });
+      chart.update('none');
+    },
+  };
+  HoverSync.register(sub);
+  chart.options.onHover = (_evt, els) => { if (els && els.length) HoverSync.emit(els[0].index, sub); };
+  chart.canvas.addEventListener('mouseleave', () => HoverSync.clear(sub));
+}
 
 // ── Init ──
 document.addEventListener('DOMContentLoaded', () => {
@@ -139,11 +192,11 @@ function getFilteredData() {
 
 function renderAll() {
   const data = getFilteredData();
+  HoverSync.reset();
   renderCards(data);
   renderBreadth(data);
   renderADRatio(data);
   renderMcClellan(data);
-  renderAdvDec(data);
   renderTable(data);
 }
 
@@ -154,15 +207,18 @@ function renderBreadth(data) {
   if (pc && pt) {
     if (!ihsgChart) ihsgChart = new BreadthChart(pc, pt, { panel: 'price' });
     ihsgChart.setData(data);
+    linkBreadth(ihsgChart);
   }
   const ac = document.getElementById('adline-chart');
   const at = document.getElementById('adline-tip');
   if (ac && at) {
     if (!adlineChart) adlineChart = new BreadthChart(ac, at, {
       panel: 'series', field: 'pctAdvancingMA', rawField: 'pctAdvancing',
-      label: `% ADVANCING · ${PCT_SMOOTH_WINDOW}D AVG`, ref: 50, unit: '%',
+      label: `% ADVANCING · ${PCT_SMOOTH_WINDOW}D AVG`,
+      tipLabel: `${PCT_SMOOTH_WINDOW}-day avg`, ref: 50, unit: '%',
     });
     adlineChart.setData(data);
+    linkBreadth(adlineChart);
   }
 }
 
@@ -171,6 +227,24 @@ function renderCards(data) {
   if (data.length === 0) return;
   const latest = data[data.length - 1];
 
+  // Hero — today's % Advancing and the plain-language verdict
+  const pa = latest.pctAdvancing;
+  const heroNum = document.getElementById('pct-advancing');
+  const heroVerdict = document.getElementById('pct-verdict');
+  const heroMa = document.getElementById('pct-advancing-ma');
+  if (heroNum && pa != null) {
+    heroNum.textContent = pa.toFixed(1) + '%';
+    heroNum.style.color = pa >= 50 ? UP : DOWN;
+  }
+  if (heroVerdict && pa != null) {
+    const broad = pa >= 50;
+    heroVerdict.textContent = broad ? 'A Broad Advance' : 'A Narrowing Market';
+    heroVerdict.style.color = broad ? UP : DOWN;
+  }
+  if (heroMa && latest.pctAdvancingMA != null) {
+    heroMa.textContent = latest.pctAdvancingMA.toFixed(1) + '%';
+  }
+
   document.getElementById('advances').textContent = latest.advances;
   document.getElementById('declines').textContent = latest.declines;
   document.getElementById('unchanged').textContent = latest.unchanged;
@@ -178,9 +252,9 @@ function renderCards(data) {
   document.getElementById('spread').textContent = (latest.spread >= 0 ? '+' : '') + latest.spread;
   document.getElementById('mcclellan').textContent = (latest.mcClellan >= 0 ? '+' : '') + latest.mcClellan.toFixed(1);
 
-  // Color the spread & mcclellan cards
-  document.getElementById('spread').style.color = latest.spread >= 0 ? '#22c55e' : '#ef4444';
-  document.getElementById('mcclellan').style.color = latest.mcClellan >= 0 ? '#a855f7' : '#ef4444';
+  // Color the spread & mcclellan figures
+  document.getElementById('spread').style.color = latest.spread >= 0 ? UP : DOWN;
+  document.getElementById('mcclellan').style.color = latest.mcClellan >= 0 ? UP : DOWN;
 }
 
 // ── A/D Ratio Chart ──
@@ -188,7 +262,7 @@ function renderADRatio(data) {
   const ctx = document.getElementById('ad-ratio-chart').getContext('2d');
   if (charts.adRatio) charts.adRatio.destroy();
 
-  const colors = data.map(d => d.ratio >= 1 ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)');
+  const colors = data.map(d => d.ratio >= 1 ? UP_BAR : DOWN_BAR);
 
   charts.adRatio = new Chart(ctx, {
     type: 'bar',
@@ -204,7 +278,7 @@ function renderADRatio(data) {
         label: 'Neutral (1.0)',
         data: data.map(() => 1),
         type: 'line',
-        borderColor: 'rgba(201,169,110,0.5)',
+        borderColor: 'rgba(166,122,38,0.6)',
         borderWidth: 1,
         borderDash: [5, 5],
         pointRadius: 0,
@@ -218,9 +292,7 @@ function renderADRatio(data) {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#16213e',
-          borderColor: 'rgba(201,169,110,0.3)',
-          borderWidth: 1,
+          ...TIP,
           callbacks: {
             label: (ctx) => {
               if (ctx.datasetIndex === 1) return '';
@@ -235,15 +307,14 @@ function renderADRatio(data) {
           ticks: { maxTicksLimit: 8, maxRotation: 0 },
         },
         y: {
-          grid: { color: 'rgba(255,255,255,0.03)' },
+          grid: { color: GRID },
           suggestedMin: 0,
         },
       },
     },
   });
 
-  document.getElementById('ad-ratio-chart').parentElement.style.height = '350px';
-  charts.adRatio.canvas.style.height = '100%';
+  linkChartJs(charts.adRatio);
 }
 
 // ── McClellan Oscillator Chart ──
@@ -251,9 +322,7 @@ function renderMcClellan(data) {
   const ctx = document.getElementById('mcclellan-chart').getContext('2d');
   if (charts.mcclellan) charts.mcclellan.destroy();
 
-  const colors = data.map(d =>
-    d.mcClellan >= 0 ? 'rgba(168,85,247,0.7)' : 'rgba(239,68,68,0.7)'
-  );
+  const colors = data.map(d => d.mcClellan >= 0 ? UP_BAR : DOWN_BAR);
 
   charts.mcclellan = new Chart(ctx, {
     type: 'bar',
@@ -274,9 +343,7 @@ function renderMcClellan(data) {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#16213e',
-          borderColor: 'rgba(201,169,110,0.3)',
-          borderWidth: 1,
+          ...TIP,
           callbacks: {
             label: (ctx) => `McClellan: ${ctx.parsed.y.toFixed(1)}`,
           },
@@ -288,72 +355,13 @@ function renderMcClellan(data) {
           ticks: { maxTicksLimit: 8, maxRotation: 0 },
         },
         y: {
-          grid: { color: 'rgba(255,255,255,0.03)' },
+          grid: { color: GRID },
         },
       },
     },
   });
 
-  document.getElementById('mcclellan-chart').parentElement.style.height = '350px';
-  charts.mcclellan.canvas.style.height = '100%';
-}
-
-// ── Advances vs Declines Chart ──
-function renderAdvDec(data) {
-  const ctx = document.getElementById('advdec-chart').getContext('2d');
-  if (charts.advdec) charts.advdec.destroy();
-
-  charts.advdec = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: data.map(d => d.date),
-      datasets: [{
-        label: 'Advances',
-        data: data.map(d => d.advances),
-        backgroundColor: 'rgba(34,197,94,0.6)',
-        borderWidth: 0,
-        borderRadius: 2,
-      }, {
-        label: 'Declines',
-        data: data.map(d => d.declines),
-        backgroundColor: 'rgba(239,68,68,0.6)',
-        borderWidth: 0,
-        borderRadius: 2,
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { intersect: false, mode: 'index' },
-      plugins: {
-        legend: {
-          display: true,
-          position: 'top',
-          labels: { boxWidth: 12, padding: 16 },
-        },
-        tooltip: {
-          backgroundColor: '#16213e',
-          borderColor: 'rgba(201,169,110,0.3)',
-          borderWidth: 1,
-        },
-      },
-      scales: {
-        x: {
-          stacked: true,
-          grid: { display: false },
-          ticks: { maxTicksLimit: 8, maxRotation: 0 },
-        },
-        y: {
-          stacked: true,
-          grid: { color: 'rgba(255,255,255,0.03)' },
-          suggestedMax: data.length > 0 ? Math.max(...data.map(d => Math.max(d.advances, d.declines))) * 1.2 : undefined,
-        },
-      },
-    },
-  });
-
-  document.getElementById('advdec-chart').parentElement.style.height = '350px';
-  charts.advdec.canvas.style.height = '100%';
+  linkChartJs(charts.mcclellan);
 }
 
 // ── Data Table ──

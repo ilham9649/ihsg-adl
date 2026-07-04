@@ -3,128 +3,162 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>IHSG Advance/Decline Index</title>
+  <title>The Breadth Ledger — IHSG Market Breadth</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,400..700&family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,320..480&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header>
-    <div class="header-content">
-      <div class="logo">
-        <span class="logo-icon">📈</span>
-        <div>
-          <h1>IHSG A/D Index</h1>
-          <p class="subtitle">Market Breadth Analysis — Jakarta Composite Index</p>
-        </div>
-      </div>
-      <div class="header-meta">
-        <span id="last-updated" class="badge">Loading...</span>
-        <button id="refresh-btn" class="btn-refresh" title="Refresh data">
-          ↻ Refresh
-        </button>
-      </div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <!-- ─────────────  MASTHEAD  ───────────── -->
+  <header class="masthead">
+    <div class="masthead-rule top"></div>
+    <div class="edition">
+      <span>Jakarta Composite Index</span>
+      <span class="edition-mark">❖</span>
+      <span>~500 Constituents</span>
     </div>
+
+    <h1 class="masthead-title">The Breadth Ledger</h1>
+
+    <div class="masthead-sub">
+      <span class="flourish">—— ✦ ——</span>
+      <p>A daily account of advance &amp; decline across the Indonesian market</p>
+      <span class="flourish">—— ✦ ——</span>
+    </div>
+
+    <div class="dateline">
+      <span id="last-updated" class="dateline-date">Loading edition…</span>
+      <span class="dateline-sep">·</span>
+      <button id="refresh-btn" class="btn-refresh" title="Re-run the breadth tally">Re-tally</button>
+    </div>
+    <div class="masthead-rule bottom"></div>
   </header>
 
   <main>
-    <!-- Summary Cards -->
-    <section class="cards" id="cards">
-      <div class="card card-advance">
-        <div class="card-label">Advances</div>
-        <div class="card-value" id="advances">—</div>
+    <!-- ─────────────  LEDE / HERO  ───────────── -->
+    <section class="lede reveal" style="--d:1">
+      <div class="lede-figure">
+        <div class="lede-kicker">Today's Breadth · % Advancing</div>
+        <div class="lede-number" id="pct-advancing">—</div>
+        <div class="lede-verdict" id="pct-verdict">Awaiting count</div>
+        <div class="lede-ma">20-day trend&nbsp;<span id="pct-advancing-ma">—</span></div>
       </div>
-      <div class="card card-decline">
-        <div class="card-label">Declines</div>
-        <div class="card-value" id="declines">—</div>
-      </div>
-      <div class="card card-unchanged">
-        <div class="card-label">Unchanged</div>
-        <div class="card-value" id="unchanged">—</div>
-      </div>
-      <div class="card card-ratio">
-        <div class="card-label">A/D Ratio</div>
-        <div class="card-value" id="ratio">—</div>
-      </div>
-      <div class="card card-spread">
-        <div class="card-label">Spread</div>
-        <div class="card-value" id="spread">—</div>
-      </div>
-      <div class="card card-mcclellan">
-        <div class="card-label">McClellan</div>
-        <div class="card-value" id="mcclellan">—</div>
+      <div class="lede-note">
+        <p class="dropcap">Market breadth measures how <em>many</em> stocks rose — not how far the
+          headline index moved. When more than half the constituents advance, the market's
+          strength is <em>broad</em>. When the figure sinks below fifty, a narrowing handful of
+          heavyweights is carrying the tape while the rank and file quietly retreat.</p>
+        <p>The gauge above counts the share of the ~500 IDX constituents that closed higher today.
+          The panels below trace that pulse back through the years.</p>
       </div>
     </section>
 
-    <!-- Date selector -->
-    <section class="chart-controls">
-      <label for="range-select">Range:</label>
-      <select id="range-select">
-        <option value="7">1 Week</option>
-        <option value="30" selected>1 Month</option>
-        <option value="90">3 Months</option>
-        <option value="0">All</option>
-      </select>
-    </section>
-
-    <!-- Charts -->
-    <section class="chart-section">
-      <div class="chart-container">
-        <h2>IHSG Index</h2>
-        <div class="breadth-frame">
-          <canvas id="ihsg-chart"></canvas>
-          <div class="bc-tip" id="ihsg-tip"></div>
-        </div>
+    <!-- ─────────────  INDICATOR STRIP  ───────────── -->
+    <section class="indicators cards reveal" style="--d:2" aria-label="Latest session indicators">
+      <div class="stat">
+        <div class="stat-label">Advancing</div>
+        <div class="stat-value up" id="advances">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Declining</div>
+        <div class="stat-value down" id="declines">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Unchanged</div>
+        <div class="stat-value" id="unchanged">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">A / D Ratio</div>
+        <div class="stat-value" id="ratio">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Net Spread</div>
+        <div class="stat-value" id="spread">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">McClellan</div>
+        <div class="stat-value" id="mcclellan">—</div>
       </div>
     </section>
 
-    <section class="chart-section">
-      <div class="chart-container">
-        <h2>% Advancing · 20-Day Average (Market Breadth)</h2>
-        <div class="breadth-frame">
-          <canvas id="adline-chart"></canvas>
-          <div class="bc-tip" id="adline-tip"></div>
-        </div>
+    <!-- ─────────────  RANGE CONTROL  ───────────── -->
+    <div class="controls reveal" style="--d:3">
+      <span class="controls-label">Reading Period</span>
+      <div class="select-wrap">
+        <select id="range-select">
+          <option value="7">One Week</option>
+          <option value="30" selected>One Month</option>
+          <option value="90">Three Months</option>
+          <option value="0">Full Record</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- ─────────────  FIGURES  ───────────── -->
+    <section class="figure reveal" style="--d:4">
+      <div class="figure-head">
+        <span class="figure-no">Fig. I</span>
+        <h2>The Index Itself</h2>
+        <span class="figure-cap">IHSG · daily open-high-low-close</span>
+      </div>
+      <div class="breadth-frame">
+        <canvas id="ihsg-chart"></canvas>
+        <div class="bc-tip" id="ihsg-tip"></div>
       </div>
     </section>
 
-    <section class="chart-section">
-      <div class="chart-container">
-        <h2>A/D Ratio (Daily)</h2>
-        <canvas id="ad-ratio-chart"></canvas>
+    <section class="figure reveal" style="--d:5">
+      <div class="figure-head">
+        <span class="figure-no">Fig. II</span>
+        <h2>The Breadth Line</h2>
+        <span class="figure-cap">% Advancing · 20-day moving average · 50% is neutral</span>
+      </div>
+      <div class="breadth-frame">
+        <canvas id="adline-chart"></canvas>
+        <div class="bc-tip" id="adline-tip"></div>
       </div>
     </section>
 
-    <section class="chart-section">
-      <div class="chart-container">
+    <section class="figure reveal" style="--d:6">
+      <div class="figure-head">
+        <span class="figure-no">Fig. III</span>
+        <h2>Advance / Decline Ratio</h2>
+        <span class="figure-cap">Advancers per decliner · unity marked</span>
+      </div>
+      <div class="chart-box"><canvas id="ad-ratio-chart"></canvas></div>
+    </section>
+
+    <section class="figure reveal" style="--d:7">
+      <div class="figure-head">
+        <span class="figure-no">Fig. IV</span>
         <h2>McClellan Oscillator</h2>
-        <canvas id="mcclellan-chart"></canvas>
+        <span class="figure-cap">EMA(19) − EMA(39) of net advances</span>
       </div>
+      <div class="chart-box"><canvas id="mcclellan-chart"></canvas></div>
     </section>
 
-    <section class="chart-section">
-      <div class="chart-container">
-        <h2>Daily Advances vs Declines</h2>
-        <canvas id="advdec-chart"></canvas>
+    <!-- ─────────────  THE LEDGER (TABLE)  ───────────── -->
+    <section class="ledger reveal" style="--d:9">
+      <div class="figure-head">
+        <span class="figure-no">Tab. A</span>
+        <h2>The Daily Record</h2>
+        <span class="figure-cap">Most recent sessions first</span>
       </div>
-    </section>
-
-    <!-- Data Table -->
-    <section class="table-section">
-      <h2>Historical Data</h2>
       <div class="table-scroll">
         <table id="data-table">
           <thead>
             <tr>
               <th>Date</th>
-              <th>Adv</th>
-              <th>Dec</th>
-              <th>Unch</th>
-              <th>Spread</th>
-              <th>Ratio</th>
-              <th>% Adv</th>
-              <th>McClellan</th>
+              <th class="num">Adv</th>
+              <th class="num">Dec</th>
+              <th class="num">Unch</th>
+              <th class="num">Spread</th>
+              <th class="num">Ratio</th>
+              <th class="num">% Adv</th>
+              <th class="num">McClellan</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -134,7 +168,12 @@
   </main>
 
   <footer>
-    <p>Data from Yahoo Finance · Calculated daily after market close · finance.sulaksono.id</p>
+    <div class="masthead-rule"></div>
+    <p class="colophon">
+      <span class="colophon-mark">❖</span>
+      Set in Fraunces, Newsreader &amp; JetBrains Mono · Figures from Yahoo Finance,
+      tallied daily after the 17:00 WIB close · <span class="colophon-site">finance.sulaksono.id</span>
+    </p>
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
