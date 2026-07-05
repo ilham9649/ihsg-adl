@@ -287,8 +287,6 @@ function renderAll() {
   HoverSync.reset();
   renderCards(data);
   renderBreadth(data);
-  renderADRatio(data);
-  renderMcClellan(data);
   renderStochastic(data);
   renderShinohara(data);
   renderTable(data);
@@ -358,113 +356,6 @@ function renderCards(data) {
   // Color the spread & mcclellan figures
   document.getElementById('spread').style.color = latest.spread >= 0 ? UP : DOWN;
   document.getElementById('mcclellan').style.color = latest.mcClellan >= 0 ? UP : DOWN;
-}
-
-// ── A/D Ratio Chart ──
-function renderADRatio(data) {
-  const ctx = document.getElementById('ad-ratio-chart').getContext('2d');
-  if (charts.adRatio) charts.adRatio.destroy();
-
-  const colors = data.map(d => d.ratio >= 1 ? UP_BAR : DOWN_BAR);
-
-  charts.adRatio = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: data.map(d => d.date),
-      datasets: [{
-        label: 'A/D Ratio',
-        data: data.map(d => d.ratio),
-        backgroundColor: colors,
-        borderWidth: 0,
-        borderRadius: 2,
-      }, {
-        label: 'Neutral (1.0)',
-        data: data.map(() => 1),
-        type: 'line',
-        borderColor: 'rgba(166,122,38,0.6)',
-        borderWidth: 1,
-        borderDash: [5, 5],
-        pointRadius: 0,
-        fill: false,
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { intersect: false, mode: 'index' },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          ...TIP,
-          callbacks: {
-            label: (ctx) => {
-              if (ctx.datasetIndex === 1) return '';
-              return `Ratio: ${ctx.parsed.y.toFixed(2)}`;
-            },
-          },
-        },
-      },
-      scales: {
-        x: {
-          grid: { display: false },
-          ticks: { maxTicksLimit: 8, maxRotation: 0 },
-        },
-        y: {
-          grid: { color: GRID },
-          suggestedMin: 0,
-        },
-      },
-    },
-  });
-
-  linkChartJs(charts.adRatio);
-}
-
-// ── McClellan Oscillator Chart ──
-function renderMcClellan(data) {
-  const ctx = document.getElementById('mcclellan-chart').getContext('2d');
-  if (charts.mcclellan) charts.mcclellan.destroy();
-
-  const colors = data.map(d => d.mcClellan >= 0 ? UP_BAR : DOWN_BAR);
-
-  charts.mcclellan = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: data.map(d => d.date),
-      datasets: [{
-        label: 'McClellan Oscillator',
-        data: data.map(d => d.mcClellan),
-        backgroundColor: colors,
-        borderWidth: 0,
-        borderRadius: 2,
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { intersect: false, mode: 'index' },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          ...TIP,
-          callbacks: {
-            label: (ctx) => `McClellan: ${ctx.parsed.y.toFixed(1)}`,
-          },
-        },
-      },
-      scales: {
-        x: {
-          grid: { display: false },
-          ticks: { maxTicksLimit: 8, maxRotation: 0 },
-        },
-        y: {
-          grid: { color: GRID },
-        },
-      },
-    },
-  });
-
-  linkChartJs(charts.mcclellan);
 }
 
 // ── Stochastic Oscillator (IHSG weekly, 15,3,3) ──
