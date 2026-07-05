@@ -33,6 +33,46 @@ function attachPctSmoothing(rows) {
   }
 }
 
+// Weekly Stochastic (15,3,3) of the IHSG index, attached to each daily row (a
+// long-horizon oversold/overbought gauge). Aggregates the stored index OHLC into
+// weekly bars, computes %K/%D, then maps each week's value back onto its days.
+function attachStochastic(rows, kLen = 15, kSmooth = 3, dSmooth = 3) {
+  const weekOf = (ds) => {
+    const dt = new Date(ds + 'T00:00:00Z');
+    const day = (dt.getUTCDay() + 6) % 7;
+    const th = new Date(dt); th.setUTCDate(dt.getUTCDate() - day + 3);
+    const y = th.getUTCFullYear();
+    const w = Math.floor((th - new Date(Date.UTC(y, 0, 1))) / (7 * 864e5)) + 1;
+    return y + '-' + String(w).padStart(2, '0');
+  };
+  const weeks = [], idx = {};
+  for (const r of rows) {
+    if (r.ihsg == null) continue;
+    const k = weekOf(r.date);
+    let w = idx[k];
+    if (!w) { w = idx[k] = { key: k, high: r.ihsgHigh ?? r.ihsg, low: r.ihsgLow ?? r.ihsg, close: r.ihsg }; weeks.push(w); }
+    w.high = Math.max(w.high, r.ihsgHigh ?? r.ihsg);
+    w.low = Math.min(w.low, r.ihsgLow ?? r.ihsg);
+    w.close = r.ihsg;
+  }
+  const rawK = weeks.map((w, i) => {
+    if (i < kLen - 1) return null;
+    let hi = -Infinity, lo = Infinity;
+    for (let j = i - kLen + 1; j <= i; j++) { hi = Math.max(hi, weeks[j].high); lo = Math.min(lo, weeks[j].low); }
+    return hi > lo ? 100 * (w.close - lo) / (hi - lo) : 50;
+  });
+  const sma = (arr, n, i) => { let s = 0, c = 0; for (let j = Math.max(0, i - n + 1); j <= i; j++) if (arr[j] != null) { s += arr[j]; c++; } return c ? s / c : null; };
+  const K = rawK.map((v, i) => v == null ? null : sma(rawK, kSmooth, i));
+  const D = K.map((v, i) => v == null ? null : sma(K, dSmooth, i));
+  const wk = {};
+  weeks.forEach((w, i) => { wk[w.key] = { K: K[i], D: D[i] }; });
+  for (const r of rows) {
+    const s = r.ihsg != null ? wk[weekOf(r.date)] : null;
+    r.stochK = s && s.K != null ? parseFloat(s.K.toFixed(1)) : null;
+    r.stochD = s && s.D != null ? parseFloat(s.D.toFixed(1)) : null;
+  }
+}
+
 // ── Palette (paper broadsheet) ──
 const INK = '#1d1813', PAPER = '#f2ebdd', GOLD = '#a67a26';
 const UP = '#2f6b4f', DOWN = '#b0392c';
@@ -134,6 +174,7 @@ async function fetchData() {
     if (data.success && data.data && data.data.length > 0) {
       allData = data.data;
       attachPctSmoothing(allData);
+      attachStochastic(allData);
       document.getElementById('last-updated').textContent = `Last: ${allData[allData.length - 1].date}`;
       renderAll();
     } else {
@@ -213,6 +254,7 @@ function renderAll() {
   renderBreadth(data);
   renderADRatio(data);
   renderMcClellan(data);
+  renderStochastic(data);
   renderTable(data);
 }
 
@@ -387,6 +429,42 @@ function renderMcClellan(data) {
   });
 
   linkChartJs(charts.mcclellan);
+}
+
+// ── Stochastic Oscillator (IHSG weekly, 15,3,3) ──
+function renderStochastic(data) {
+  const ctx = document.getElementById('stoch-chart').getContext('2d');
+  if (charts.stoch) charts.stoch.destroy();
+
+  const labels = data.map(d => d.date);
+  charts.stoch = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        // shaded zones: 0-20 (oversold, green) and 80-100 (overbought, red)
+        { label: '_oversold', data: data.map(() => 20), borderColor: 'rgba(29,24,19,0.28)', borderWidth: 1, borderDash: [4, 4], pointRadius: 0, fill: 'start', backgroundColor: 'rgba(47,107,79,0.10)' },
+        { label: '_overbought', data: data.map(() => 80), borderColor: 'rgba(29,24,19,0.28)', borderWidth: 1, borderDash: [4, 4], pointRadius: 0, fill: 'end', backgroundColor: 'rgba(176,57,44,0.09)' },
+        { label: '%K', data: data.map(d => d.stochK), borderColor: '#3f5170', borderWidth: 1.6, pointRadius: 0, tension: 0.15, spanGaps: true },
+        { label: '%D', data: data.map(d => d.stochD), borderColor: GOLD, borderWidth: 1.6, pointRadius: 0, tension: 0.15, spanGaps: true },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { display: true, position: 'top', labels: { boxWidth: 12, padding: 14, filter: (it) => it.text === '%K' || it.text === '%D' } },
+        tooltip: { ...TIP, filter: (it) => it.dataset.label === '%K' || it.dataset.label === '%D', callbacks: { label: (c) => `${c.dataset.label}: ${c.parsed.y != null ? c.parsed.y.toFixed(1) : '—'}` } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 8, maxRotation: 0 } },
+        y: { min: 0, max: 100, grid: { color: GRID }, ticks: { stepSize: 20 } },
+      },
+    },
+  });
+
+  linkChartJs(charts.stoch);
 }
 
 // ── Data Table ──
