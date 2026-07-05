@@ -33,28 +33,34 @@ function attachPctSmoothing(rows) {
   }
 }
 
-// Weekly Stochastic (15,3,3) of the IHSG index, attached to each daily row (a
-// long-horizon oversold/overbought gauge). Aggregates the stored index OHLC into
-// weekly bars, computes %K/%D, then maps each week's value back onto its days.
-function attachStochastic(rows, kLen = 15, kSmooth = 3, dSmooth = 3) {
-  const weekOf = (ds) => {
-    const dt = new Date(ds + 'T00:00:00Z');
-    const day = (dt.getUTCDay() + 6) % 7;
-    const th = new Date(dt); th.setUTCDate(dt.getUTCDate() - day + 3);
-    const y = th.getUTCFullYear();
-    const w = Math.floor((th - new Date(Date.UTC(y, 0, 1))) / (7 * 864e5)) + 1;
-    return y + '-' + String(w).padStart(2, '0');
-  };
+// ISO-week key for a YYYY-MM-DD date; and weekly OHLC bars of the IHSG index
+// (shared by the weekly index oscillators below).
+function isoWeek(ds) {
+  const dt = new Date(ds + 'T00:00:00Z');
+  const day = (dt.getUTCDay() + 6) % 7;
+  const th = new Date(dt); th.setUTCDate(dt.getUTCDate() - day + 3);
+  const y = th.getUTCFullYear();
+  const w = Math.floor((th - new Date(Date.UTC(y, 0, 1))) / (7 * 864e5)) + 1;
+  return y + '-' + String(w).padStart(2, '0');
+}
+function weeklyBars(rows) {
   const weeks = [], idx = {};
   for (const r of rows) {
     if (r.ihsg == null) continue;
-    const k = weekOf(r.date);
+    const k = isoWeek(r.date);
     let w = idx[k];
     if (!w) { w = idx[k] = { key: k, high: r.ihsgHigh ?? r.ihsg, low: r.ihsgLow ?? r.ihsg, close: r.ihsg }; weeks.push(w); }
     w.high = Math.max(w.high, r.ihsgHigh ?? r.ihsg);
     w.low = Math.min(w.low, r.ihsgLow ?? r.ihsg);
     w.close = r.ihsg;
   }
+  return weeks;
+}
+
+// Weekly Stochastic (15,3,3) of the IHSG index, attached to each daily row (a
+// long-horizon oversold/overbought gauge).
+function attachStochastic(rows, kLen = 15, kSmooth = 3, dSmooth = 3) {
+  const weeks = weeklyBars(rows);
   const rawK = weeks.map((w, i) => {
     if (i < kLen - 1) return null;
     let hi = -Infinity, lo = Infinity;
@@ -67,9 +73,37 @@ function attachStochastic(rows, kLen = 15, kSmooth = 3, dSmooth = 3) {
   const wk = {};
   weeks.forEach((w, i) => { wk[w.key] = { K: K[i], D: D[i] }; });
   for (const r of rows) {
-    const s = r.ihsg != null ? wk[weekOf(r.date)] : null;
+    const s = r.ihsg != null ? wk[isoWeek(r.date)] : null;
     r.stochK = s && s.K != null ? parseFloat(s.K.toFixed(1)) : null;
     r.stochD = s && s.D != null ? parseFloat(s.D.toFixed(1)) : null;
+  }
+}
+
+// Weekly Shinohara Intensity Ratio (26) of the IHSG — the EXACT formula Yahoo
+// Finance uses (from its ChartIQ study library), so our numbers match Yahoo's:
+//   Strong Ratio = 100 · Σ(High − prevClose) / Σ(prevClose − Low)   over 26 weeks
+//   Weak Ratio   = 100 · Σ(High − Close)     / Σ(Close − Low)       over 26 weeks
+// Weak − Strong > 100 is a rare "extremely oversold" reading (a bottom signal).
+function attachShinohara(rows, period = 26) {
+  const weeks = weeklyBars(rows);
+  const val = {};
+  for (let i = 0; i < weeks.length; i++) {
+    if (i < period) { val[weeks[i].key] = { strong: null, weak: null }; continue; }
+    let wn = 0, wd = 0, sn = 0, sd = 0;
+    for (let k = i - period + 1; k <= i; k++) {
+      const b = weeks[k], pc = weeks[k - 1].close;
+      wn += b.high - b.close; wd += b.close - b.low;
+      sn += b.high - pc; sd += pc - b.low;
+    }
+    val[weeks[i].key] = {
+      strong: sd !== 0 ? parseFloat((100 * sn / sd).toFixed(1)) : null,
+      weak: wd !== 0 ? parseFloat((100 * wn / wd).toFixed(1)) : null,
+    };
+  }
+  for (const r of rows) {
+    const v = r.ihsg != null ? val[isoWeek(r.date)] : null;
+    r.shinStrong = v ? v.strong : null;
+    r.shinWeak = v ? v.weak : null;
   }
 }
 
@@ -175,6 +209,7 @@ async function fetchData() {
       allData = data.data;
       attachPctSmoothing(allData);
       attachStochastic(allData);
+      attachShinohara(allData);
       document.getElementById('last-updated').textContent = `Last: ${allData[allData.length - 1].date}`;
       renderAll();
     } else {
@@ -255,6 +290,7 @@ function renderAll() {
   renderADRatio(data);
   renderMcClellan(data);
   renderStochastic(data);
+  renderShinohara(data);
   renderTable(data);
 }
 
@@ -465,6 +501,51 @@ function renderStochastic(data) {
   });
 
   linkChartJs(charts.stoch);
+}
+
+// ── Shinohara Intensity Ratio (IHSG weekly, 26) — matches Yahoo/ChartIQ ──
+function renderShinohara(data) {
+  const ctx = document.getElementById('shinohara-chart').getContext('2d');
+  if (charts.shinohara) charts.shinohara.destroy();
+
+  const labels = data.map(d => d.date);
+  charts.shinohara = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Weak', data: data.map(d => d.shinWeak), borderColor: '#5F7CB8', borderWidth: 1.6, pointRadius: 0, tension: 0.15, spanGaps: true },
+        // fill the gap between the two lines (a wide gap = the oversold signal)
+        { label: 'Strong', data: data.map(d => d.shinStrong), borderColor: '#E99B54', borderWidth: 1.6, pointRadius: 0, tension: 0.15, spanGaps: true, fill: '-1', backgroundColor: 'rgba(95,124,184,0.09)' },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { display: true, position: 'top', labels: { boxWidth: 12, padding: 14 } },
+        tooltip: {
+          ...TIP,
+          callbacks: {
+            label: (c) => `${c.dataset.label}: ${c.parsed.y != null ? c.parsed.y.toFixed(1) : '—'}`,
+            afterBody: (items) => {
+              const d = data[items[0].dataIndex];
+              if (d.shinWeak == null || d.shinStrong == null) return '';
+              const diff = d.shinWeak - d.shinStrong;
+              return `Weak − Strong: ${diff.toFixed(1)}${diff > 100 ? '  ⚠ extremely oversold' : ''}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 8, maxRotation: 0 } },
+        y: { grid: { color: GRID }, suggestedMin: 0 },
+      },
+    },
+  });
+
+  linkChartJs(charts.shinohara);
 }
 
 // ── Data Table ──
