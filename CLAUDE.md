@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Serverless IHSG (Jakarta Composite Index) market breadth dashboard. Tracks the **full IDX listing (~957 stocks, all boards)** daily, calculating **% Advancing** (20/100/200-day MAs), A/D Ratio, Spread, and McClellan Oscillator.
+Serverless IHSG (Jakarta Composite Index) market dashboard — **"The Jakarta Ledger"** (editorial broadsheet UI). Tracks the **full IDX listing (~957 stocks, all boards)** daily. The backend computes per-day breadth metrics (**% Advancing**, spread, A/D ratio, McClellan, `adLine`) and stores the IHSG index OHLC; the frontend adds index-price and momentum views. Panels: IHSG candles, the % Advancing breadth line (20/100/200-day MA ribbon), weekly Stochastic, and the Shinohara Intensity Ratio. (The A/D Ratio and McClellan *chart panels* were removed from the UI; those values are still computed and shown in the top indicator strip.)
 
 > **Headline breadth = % Advancing, NOT the cumulative A/D Line.** A raw cumulative A/D Line (running sum of advances−declines) is not a mean-reverting oscillator: over 2023–2026 it drifts down ~1.5k on the liquid set and ~16k on the broad ~500 universe, because Indonesia's equal-weight breadth was persistently negative while the cap-weighted IHSG was held up by a few mega-caps. This is **genuine breadth, not a computation bug** — verified: switching raw→adjusted close removes only ~5–11% of the drift, and a volume/forward-fill filter removes ~0%. So the dashboard leads with `pctAdvancing` = advances/(advances+declines)×100, which oscillates around 50%. `adLine` is still computed and stored as a raw datum (and its cumulative invariant is unit-tested) but is not charted. See `computeSeries` in `backend/scrapers/yahoo.js`.
 
@@ -69,6 +69,14 @@ Uses Yahoo Finance v8 chart API directly (`/v8/finance/chart/{ticker}`) — no e
 ### DynamoDB Pattern
 Table: `ihsg-adl` (or `TABLE_NAME` env var). Primary key is `date` (string S). Stores aggregated daily metrics, not per-ticker data. `BatchWriteItem` chunks at 25 items max.
 
+### Frontend Indicators (computed client-side, `frontend/app.js`)
+Everything the frontend charts is **derived in the browser** from what the API already returns (daily breadth counts + IHSG OHLC) — there are **no dedicated backend/DB fields** for these, so tuning them needs only a frontend deploy (no re-refresh):
+- **% Advancing MA ribbon** — `attachPctSmoothing` computes 20/100/200-day SMAs of `pctAdvancing` over the full series (`pctAdvancingMA`/`...MA100`/`...MA200`). Drawn by the custom canvas chart `frontend/breadth-chart.js` as a ribbon with a toggle checklist, a faint daily dot-cloud (raw `pctAdvancing`), and the 50% neutral line. The chart also powers the IHSG candles panel.
+- **Stochastic (15,3,3)** — `attachStochastic` aggregates IHSG OHLC to **weekly** bars → `stochK`/`stochD`.
+- **Shinohara Intensity Ratio (26)** — `attachShinohara` uses **Yahoo's exact ChartIQ formula** so the numbers match Yahoo Finance's display: `Strong = 100·Σ(High−prevClose)/Σ(prevClose−Low)`, `Weak = 100·Σ(High−Close)/Σ(Close−Low)` over 26 **weekly** bars (`shinStrong`/`shinWeak`). `Weak − Strong > 100` = "extremely oversold". ⚠️ The textbook Shinohara / AR-BR uses High−**Open** and does NOT match Yahoo — don't "correct" it to that.
+- **Cross-chart hover sync** (`HoverSync`) — hovering any panel highlights the same date on all of them (both the custom-canvas and Chart.js panels share the filtered-data index).
+- **Reading period** — `getFilteredData` slices `allData` by trailing row count, plus a special `ytd` value (filter from Jan 1 of the current year).
+
 ### Deployment
 Push to `main` triggers GitHub Actions:
 1. Frontend: `aws s3 sync` to S3, CloudFront invalidation
@@ -80,9 +88,13 @@ Push to `main` triggers GitHub Actions:
 
 ## Testing Locally
 
-No local test runner exists. To test backend changes:
-1. Build zip: `npm run zip`
-2. Deploy manually or push to main (triggers CI/CD)
-3. Use CloudWatch Logs for Lambda debugging
+No hosted dev server, but you can verify before deploying:
 
-For frontend changes, deploy and observe live — no local dev server.
+- **Frontend:** run a tiny static server over `frontend/` that returns a saved copy of the live API for `/api/ad` (`curl https://finance.sulaksono.id/api/ad -o /tmp/ad.json`), then drive it in a browser. All indicators are client-side, so this exercises real behavior against real data. (Charts render on canvas / Chart.js — screenshot to verify.)
+- **Backend / big repopulations:** run the handler locally against the **prod** DynamoDB table (region `ap-southeast-1`):
+  `AWS_REGION=ap-southeast-1 TABLE_NAME=ihsg-adl node -e "import('./backend/index.js').then(m=>m.handler({source:'aws.events'}))"`
+  (~5 min for the full 957-ticker scrape; needs AWS creds). The API read path is unchanged, so the live site reflects the new data immediately — no deploy needed for a data-only change.
+- **Unit tests:** `cd backend && npm test`.
+- **Lambda debugging:** CloudWatch Logs.
+
+For a normal frontend change, push to `main` and observe live.

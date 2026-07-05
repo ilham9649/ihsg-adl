@@ -277,8 +277,13 @@ function showEmpty(msg) {
 
 // ── Render ──
 function getFilteredData() {
-  const range = parseInt(document.getElementById('range-select').value);
-  if (range === 0) return allData;
+  const raw = document.getElementById('range-select').value;
+  if (raw === 'ytd') {
+    const jan1 = new Date().getFullYear() + '-01-01';
+    return allData.filter(d => d.date >= jan1);
+  }
+  const range = parseInt(raw, 10);
+  if (!range) return allData; // 0 / NaN → Full Record
   return allData.slice(-range);
 }
 
