@@ -4,7 +4,7 @@
 
 const API_BASE = window.location.origin;
 
-// Raw daily % Advancing is very noisy (each session is a fresh draw of ~500
+// Raw daily % Advancing is very noisy (each session is a fresh draw of ~950
 // stocks), so the breadth line is smoothed with a trailing moving average.
 // Computed over the FULL series (not the sliced range) so the visible window has
 // no warmup gap. Tune the window here.
@@ -452,9 +452,7 @@ function renderTable(data) {
       <td class="td-decline">${d.declines}</td>
       <td>${d.unchanged}</td>
       <td class="${d.spread >= 0 ? 'td-positive' : 'td-negative'}">${d.spread >= 0 ? '+' : ''}${d.spread}</td>
-      <td>${d.ratio.toFixed(2)}</td>
       <td class="${d.pctAdvancing != null && d.pctAdvancing >= 50 ? 'td-positive' : 'td-negative'}">${d.pctAdvancing != null ? d.pctAdvancing.toFixed(1) + '%' : '—'}</td>
-      <td class="${d.mcClellan >= 0 ? 'td-positive' : 'td-negative'}">${d.mcClellan >= 0 ? '+' : ''}${d.mcClellan.toFixed(1)}</td>
     </tr>
   `).join('');
 }
