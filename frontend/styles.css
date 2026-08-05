@@ -107,7 +107,7 @@ footer .masthead-rule { max-width: var(--maxw); margin: 0 auto 18px; }
 .masthead-sub p {
   font-style: italic;
   font-size: 1rem;
-  max-width: 40ch;
+  max-width: 64ch; /* one line on desktop, so the flourishes stay level with it */
 }
 .flourish { color: var(--gold); letter-spacing: .1em; font-size: .8rem; white-space: nowrap; }
 
@@ -186,6 +186,7 @@ main { max-width: var(--maxw); margin: 0 auto; }
   margin-top: 10px;
 }
 .lede-ma span { color: var(--ink); font-weight: 500; }
+.lede-ma .lede-ma-sep { color: var(--rule); }
 
 .lede-note { font-size: 1.05rem; color: var(--ink-soft); }
 .lede-note p + p { margin-top: 12px; }
@@ -356,12 +357,18 @@ main { max-width: var(--maxw); margin: 0 auto; }
 }
 .ma-check:has(input:not(:checked)) { color: var(--ink-faint); opacity: .6; }
 
+/* Standfirst under a figure heading, for panels whose reading needs a sentence. */
+.figure-note {
+  max-width: 68ch;
+  margin: -6px 0 18px;
+  font-size: .98rem;
+  color: var(--ink-soft);
+}
+.figure-note em { font-style: italic; color: var(--ink); }
+.mark-key { color: var(--gold); font-style: normal; }
+
 .breadth-frame { position: relative; height: 360px; }
 .breadth-frame canvas { width: 100% !important; height: 100% !important; display: block; }
-/* Chart.js panels get their own boxed height so the section heading is never
-   overlapped by the canvas. */
-.chart-box { position: relative; height: 340px; }
-.chart-box canvas { width: 100% !important; height: 100% !important; display: block; }
 
 /* Chart tooltip (custom canvas charts) */
 .bc-tip {

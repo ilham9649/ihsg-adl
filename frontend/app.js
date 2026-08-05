@@ -13,9 +13,7 @@ const PCT_SMOOTH_WINDOW = 20;
 const PCT_MAS = { pctAdvancingMA: 20, pctAdvancingMA100: 100, pctAdvancingMA200: 200 };
 
 let allData = [];
-let charts = {};
-let ihsgChart = null;
-let adlineChart = null;
+const panels = {}; // panel id → BreadthChart (built once, re-fed on every render)
 
 // Attach a trailing SMA of pctAdvancing for each window, computed over the FULL
 // series (so the visible range has no warmup gap). Uses whatever prior values
@@ -31,6 +29,24 @@ function attachPctSmoothing(rows) {
       rows[i][field] = cnt ? parseFloat((sum / cnt).toFixed(2)) : null;
     }
   }
+}
+
+// Zweig Breadth Thrust — a 10-day EMA of % Advancing. The signal is the climb
+// from an oversold ≤40 reading to ≥61.5 within 10 sessions: a rare sign that a
+// bottom was bought by the whole market rather than a few index heavyweights.
+// Attaches `zbt` (the EMA) and `thrust` (true on the triggering session).
+function attachThrust(rows, span = 10, low = 40, high = 61.5) {
+  const alpha = 2 / (span + 1);
+  let ema = null, prev = null, lowAt = -1;
+  rows.forEach((r, i) => {
+    r.thrust = false;
+    if (r.pctAdvancing == null) { r.zbt = null; return; }
+    ema = ema == null ? r.pctAdvancing : r.pctAdvancing * alpha + ema * (1 - alpha);
+    r.zbt = parseFloat(ema.toFixed(2));
+    if (ema <= low) lowAt = i;
+    if (prev != null && prev < high && ema >= high && lowAt >= 0 && i - lowAt <= span) r.thrust = true;
+    prev = ema;
+  });
 }
 
 // ISO-week key for a YYYY-MM-DD date; and weekly OHLC bars of the IHSG index
@@ -104,27 +120,25 @@ function attachShinohara(rows, period = 26) {
     const v = r.ihsg != null ? val[isoWeek(r.date)] : null;
     r.shinStrong = v ? v.strong : null;
     r.shinWeak = v ? v.weak : null;
+    // The reading IS the gap between the two ratios, so chart it directly
+    // instead of asking the eye to measure a distance between two lines.
+    r.shinSpread = (r.shinWeak != null && r.shinStrong != null)
+      ? parseFloat((r.shinWeak - r.shinStrong).toFixed(1)) : null;
   }
 }
 
 // ── Palette (paper broadsheet) ──
-const INK = '#1d1813', PAPER = '#f2ebdd', GOLD = '#a67a26';
+const GOLD = '#a67a26', SLATE = '#3f5170';
 const UP = '#2f6b4f', DOWN = '#b0392c';
-const UP_BAR = 'rgba(47,107,79,0.72)', DOWN_BAR = 'rgba(176,57,44,0.72)';
-const GRID = 'rgba(29,24,19,0.06)';
-const TIP = { backgroundColor: INK, titleColor: PAPER, bodyColor: PAPER, borderColor: GOLD, borderWidth: 1, cornerRadius: 0, padding: 10, titleFont: { family: "'JetBrains Mono', monospace" }, bodyFont: { family: "'JetBrains Mono', monospace" } };
-
-// ── Chart defaults ──
-Chart.defaults.color = '#5b5147';
-Chart.defaults.borderColor = GRID;
-Chart.defaults.font.family = "'JetBrains Mono', monospace";
-Chart.defaults.font.size = 11;
+const ZONE_UP = 'rgba(47,107,79,0.10)', ZONE_DOWN = 'rgba(176,57,44,0.09)';
+// Neutral band: marks a notable region that is neither bullish nor bearish, so
+// low readings don't read as "green = buy" on one panel and "red = bad" on another.
+const ZONE_FAINT = 'rgba(29,24,19,0.05)';
 
 // ── Cross-chart hover sync ──
 // Every panel shares the same filtered data array, so a hovered position maps to
 // the same index everywhere. Hovering one chart highlights that date in all the
-// others. Subscribers are rebuilt on each renderAll (Chart.js charts are
-// recreated), so we reset the list there.
+// others. Subscribers re-register on each renderAll, so we reset the list there.
 const HoverSync = {
   subs: [],
   reset() { this.subs = []; },
@@ -141,31 +155,6 @@ function linkBreadth(bc) {
   bc.onLeave = () => HoverSync.clear(sub);
 }
 
-// Link a Chart.js chart into the sync bus (programmatic tooltip + active element).
-function linkChartJs(chart) {
-  const sub = {
-    show: (i) => {
-      if (chart._syncIdx === i) return;
-      const el = chart.getDatasetMeta(0)?.data?.[i];
-      if (!el) return;
-      chart._syncIdx = i;
-      chart.setActiveElements([{ datasetIndex: 0, index: i }]);
-      chart.tooltip.setActiveElements([{ datasetIndex: 0, index: i }], { x: el.x, y: el.y });
-      chart.update('none');
-    },
-    hide: () => {
-      if (chart._syncIdx == null) return;
-      chart._syncIdx = null;
-      chart.setActiveElements([]);
-      chart.tooltip.setActiveElements([], { x: 0, y: 0 });
-      chart.update('none');
-    },
-  };
-  HoverSync.register(sub);
-  chart.options.onHover = (_evt, els) => { if (els && els.length) HoverSync.emit(els[0].index, sub); };
-  chart.canvas.addEventListener('mouseleave', () => HoverSync.clear(sub));
-}
-
 // ── Init ──
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('range-select').addEventListener('change', () => renderAll());
@@ -177,11 +166,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Show/hide breadth lines from the checklist (unchecked → hidden key).
 function applyMaToggles() {
-  if (!adlineChart) return;
+  if (!panels.adline) return;
   const hidden = new Set();
   document.querySelectorAll('#ma-checklist input[type=checkbox]')
     .forEach(cb => { if (!cb.checked) hidden.add(cb.dataset.key); });
-  adlineChart.setHidden(hidden);
+  panels.adline.setHidden(hidden);
 }
 
 // ── Fetch ──
@@ -208,6 +197,7 @@ async function fetchData() {
     if (data.success && data.data && data.data.length > 0) {
       allData = data.data;
       attachPctSmoothing(allData);
+      attachThrust(allData);
       attachStochastic(allData);
       attachShinohara(allData);
       document.getElementById('last-updated').textContent = `Last: ${allData[allData.length - 1].date}`;
@@ -291,39 +281,81 @@ function renderAll() {
   const data = getFilteredData();
   HoverSync.reset();
   renderCards(data);
-  renderBreadth(data);
-  renderStochastic(data);
-  renderShinohara(data);
+  renderPanels(data);
   renderTable(data);
 }
 
-// ── IHSG price + A/D Line (two separate charts) ──
-function renderBreadth(data) {
-  const pc = document.getElementById('ihsg-chart');
-  const pt = document.getElementById('ihsg-tip');
-  if (pc && pt) {
-    if (!ihsgChart) ihsgChart = new BreadthChart(pc, pt, { panel: 'price' });
-    ihsgChart.setData(data);
-    linkBreadth(ihsgChart);
+// ── Chart panels ──
+// Every panel is a BreadthChart, so all four share one visual language: same
+// axis placement, tick format, tooltip and hover sync.
+const PANEL_SPECS = {
+  ihsg: { panel: 'price' },
+
+  adline: {
+    panel: 'series', field: 'pctAdvancingMA', rawField: 'pctAdvancing',
+    label: '% ADVANCING', tipLabel: `${PCT_SMOOTH_WINDOW}-day avg`,
+    legendLabel: `${PCT_SMOOTH_WINDOW}d`, ref: 50, unit: '%',
+    overlays: [
+      { field: 'pctAdvancingMA100', color: GOLD, width: 1.4, label: '100-day', legend: '100d' },
+      { field: 'pctAdvancingMA200', color: SLATE, width: 1.6, label: '200-day', legend: '200d' },
+    ],
+  },
+
+  zbt: {
+    // No raw dot-cloud here: the fixed 30–70 window would clip it, and Fig. II
+    // already shows the daily scatter.
+    panel: 'series', field: 'zbt',
+    label: 'ZWEIG THRUST', tipLabel: '10-day EMA', legendLabel: '10d EMA',
+    // Reference is 50 (neutral breadth) — colouring against the 61.5 trigger
+    // would paint the entire record red, since IDX has never reached it.
+    ref: 50, unit: '%', yMin: 20, yMax: 70, markField: 'thrust',
+    zones: [
+      { from: -Infinity, to: 40, fill: ZONE_FAINT }, // oversold setup
+      { from: 61.5, to: Infinity, fill: ZONE_UP },   // the thrust zone
+    ],
+  },
+
+  stoch: {
+    panel: 'series', field: 'stochK',
+    label: 'STOCHASTIC', tipLabel: '%K', legendLabel: '%K',
+    ref: 50, yMin: 0, yMax: 100, tipAd: false,
+    overlays: [{ field: 'stochD', color: SLATE, width: 1.6, label: '%D', legend: '%D' }],
+    zones: [
+      { from: 0, to: 20, fill: ZONE_UP },
+      { from: 80, to: 100, fill: ZONE_DOWN },
+    ],
+  },
+
+  shinohara: {
+    panel: 'series', field: 'shinSpread',
+    label: 'WEAK − STRONG', tipLabel: 'Weak − Strong', legendLabel: 'weak−strong',
+    // Neutral is 0 (the two ratios equal). 100 is the rare oversold threshold,
+    // shaded rather than used as the baseline — anchoring the fill there would
+    // paint the whole record red.
+    ref: 0, tipAd: false,
+    zones: [{ from: 100, to: Infinity, fill: ZONE_UP }],
+  },
+};
+
+function renderPanels(data) {
+  for (const [id, spec] of Object.entries(PANEL_SPECS)) {
+    const canvas = document.getElementById(id + '-chart');
+    const tip = document.getElementById(id + '-tip');
+    if (!canvas || !tip) continue;
+    if (!panels[id]) panels[id] = new BreadthChart(canvas, tip, spec);
+    panels[id].setData(data);
+    linkBreadth(panels[id]);
   }
-  const ac = document.getElementById('adline-chart');
-  const at = document.getElementById('adline-tip');
-  if (ac && at) {
-    if (!adlineChart) adlineChart = new BreadthChart(ac, at, {
-      panel: 'series', field: 'pctAdvancingMA', rawField: 'pctAdvancing',
-      label: '% ADVANCING', tipLabel: `${PCT_SMOOTH_WINDOW}-day avg`,
-      legendLabel: `${PCT_SMOOTH_WINDOW}d`, ref: 50, unit: '%',
-      overlays: [
-        { field: 'pctAdvancingMA100', color: '#a67a26', width: 1.4, label: '100-day', legend: '100d' },
-        { field: 'pctAdvancingMA200', color: '#3f5170', width: 1.6, label: '200-day', legend: '200d' },
-      ],
-    });
-    adlineChart.setData(data);
-    linkBreadth(adlineChart);
-  }
+  applyMaToggles();
 }
 
 // ── Cards ──
+function ordinal(n) {
+  const t = n % 100;
+  const suffix = (t >= 11 && t <= 13) ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th';
+  return n + suffix;
+}
+
 function renderCards(data) {
   if (data.length === 0) return;
   const latest = data[data.length - 1];
@@ -346,6 +378,23 @@ function renderCards(data) {
     heroMa.textContent = latest.pctAdvancingMA.toFixed(1) + '%';
   }
 
+  // Rank today's reading against every session on record, so the headline
+  // figure says whether it is ordinary or extreme.
+  const heroPct = document.getElementById('pct-percentile');
+  if (heroPct && pa != null) {
+    const hist = allData.map(d => d.pctAdvancing).filter(v => v != null);
+    const rank = Math.round(hist.filter(v => v < pa).length / hist.length * 100);
+    heroPct.textContent = ordinal(rank);
+  }
+
+  // Highest thrust reading ever recorded — quoted in the Fig. III standfirst,
+  // computed rather than hardcoded so it stays true as the record grows.
+  const zbtRecord = document.getElementById('zbt-record');
+  if (zbtRecord) {
+    const peak = Math.max(...allData.map(d => d.zbt).filter(v => v != null));
+    zbtRecord.textContent = peak.toFixed(1) + '%';
+  }
+
   // Constituents actually counted in the latest session (transparency: the full
   // discovered IDX universe, minus any that didn't trade / lacked a prior close).
   const universe = document.getElementById('universe-count');
@@ -361,87 +410,6 @@ function renderCards(data) {
   // Color the spread & mcclellan figures
   document.getElementById('spread').style.color = latest.spread >= 0 ? UP : DOWN;
   document.getElementById('mcclellan').style.color = latest.mcClellan >= 0 ? UP : DOWN;
-}
-
-// ── Stochastic Oscillator (IHSG weekly, 15,3,3) ──
-function renderStochastic(data) {
-  const ctx = document.getElementById('stoch-chart').getContext('2d');
-  if (charts.stoch) charts.stoch.destroy();
-
-  const labels = data.map(d => d.date);
-  charts.stoch = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [
-        // shaded zones: 0-20 (oversold, green) and 80-100 (overbought, red)
-        { label: '_oversold', data: data.map(() => 20), borderColor: 'rgba(29,24,19,0.28)', borderWidth: 1, borderDash: [4, 4], pointRadius: 0, fill: 'start', backgroundColor: 'rgba(47,107,79,0.10)' },
-        { label: '_overbought', data: data.map(() => 80), borderColor: 'rgba(29,24,19,0.28)', borderWidth: 1, borderDash: [4, 4], pointRadius: 0, fill: 'end', backgroundColor: 'rgba(176,57,44,0.09)' },
-        { label: '%K', data: data.map(d => d.stochK), borderColor: '#3f5170', borderWidth: 1.6, pointRadius: 0, tension: 0.15, spanGaps: true },
-        { label: '%D', data: data.map(d => d.stochD), borderColor: GOLD, borderWidth: 1.6, pointRadius: 0, tension: 0.15, spanGaps: true },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { intersect: false, mode: 'index' },
-      plugins: {
-        legend: { display: true, position: 'top', labels: { boxWidth: 12, padding: 14, filter: (it) => it.text === '%K' || it.text === '%D' } },
-        tooltip: { ...TIP, filter: (it) => it.dataset.label === '%K' || it.dataset.label === '%D', callbacks: { label: (c) => `${c.dataset.label}: ${c.parsed.y != null ? c.parsed.y.toFixed(1) : '—'}` } },
-      },
-      scales: {
-        x: { grid: { display: false }, ticks: { maxTicksLimit: 8, maxRotation: 0 } },
-        y: { min: 0, max: 100, grid: { color: GRID }, ticks: { stepSize: 20 } },
-      },
-    },
-  });
-
-  linkChartJs(charts.stoch);
-}
-
-// ── Shinohara Intensity Ratio (IHSG weekly, 26) — matches Yahoo/ChartIQ ──
-function renderShinohara(data) {
-  const ctx = document.getElementById('shinohara-chart').getContext('2d');
-  if (charts.shinohara) charts.shinohara.destroy();
-
-  const labels = data.map(d => d.date);
-  charts.shinohara = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [
-        { label: 'Weak', data: data.map(d => d.shinWeak), borderColor: '#5F7CB8', borderWidth: 1.6, pointRadius: 0, tension: 0.15, spanGaps: true },
-        // fill the gap between the two lines (a wide gap = the oversold signal)
-        { label: 'Strong', data: data.map(d => d.shinStrong), borderColor: '#E99B54', borderWidth: 1.6, pointRadius: 0, tension: 0.15, spanGaps: true, fill: '-1', backgroundColor: 'rgba(95,124,184,0.09)' },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { intersect: false, mode: 'index' },
-      plugins: {
-        legend: { display: true, position: 'top', labels: { boxWidth: 12, padding: 14 } },
-        tooltip: {
-          ...TIP,
-          callbacks: {
-            label: (c) => `${c.dataset.label}: ${c.parsed.y != null ? c.parsed.y.toFixed(1) : '—'}`,
-            afterBody: (items) => {
-              const d = data[items[0].dataIndex];
-              if (d.shinWeak == null || d.shinStrong == null) return '';
-              const diff = d.shinWeak - d.shinStrong;
-              return `Weak − Strong: ${diff.toFixed(1)}${diff > 100 ? '  ⚠ extremely oversold' : ''}`;
-            },
-          },
-        },
-      },
-      scales: {
-        x: { grid: { display: false }, ticks: { maxTicksLimit: 8, maxRotation: 0 } },
-        y: { grid: { color: GRID }, suggestedMin: 0 },
-      },
-    },
-  });
-
-  linkChartJs(charts.shinohara);
 }
 
 // ── Data Table ──

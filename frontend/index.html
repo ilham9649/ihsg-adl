@@ -44,7 +44,11 @@
         <div class="lede-kicker">Today's Breadth · % Advancing</div>
         <div class="lede-number" id="pct-advancing">—</div>
         <div class="lede-verdict" id="pct-verdict">Awaiting count</div>
-        <div class="lede-ma">20-day trend&nbsp;<span id="pct-advancing-ma">—</span></div>
+        <div class="lede-ma">
+          20-day trend&nbsp;<span id="pct-advancing-ma">—</span>
+          <span class="lede-ma-sep">·</span>
+          <span id="pct-percentile">—</span>&nbsp;percentile on record
+        </div>
       </div>
       <div class="lede-note">
         <p class="dropcap">Market breadth measures how <em>many</em> stocks rose — not how far the
@@ -91,11 +95,11 @@
       <div class="select-wrap">
         <select id="range-select">
           <option value="7">One Week</option>
-          <option value="30" selected>One Month</option>
+          <option value="30">One Month</option>
           <option value="90">Three Months</option>
           <option value="126">Six Months</option>
           <option value="ytd">Year to Date</option>
-          <option value="252">One Year</option>
+          <option value="252" selected>One Year</option>
           <option value="756">Three Years</option>
           <option value="0">Full Record</option>
         </select>
@@ -136,19 +140,51 @@
     <section class="figure reveal" style="--d:6">
       <div class="figure-head">
         <span class="figure-no">Fig. III</span>
-        <h2>Market Momentum — Stochastic</h2>
-        <span class="figure-cap">IHSG weekly %K / %D (15,3,3) · &lt;20 oversold (buy zone), &gt;80 overbought</span>
+        <h2>The Zweig Breadth Thrust</h2>
+        <span class="figure-cap">10-day EMA of % Advancing · a climb from 40% to 61.5% inside ten sessions</span>
       </div>
-      <div class="chart-box"><canvas id="stoch-chart"></canvas></div>
+      <p class="figure-note">
+        Zweig's test asks whether a bottom was bought by the <em>whole</em> market or only by a
+        handful of heavyweights: the ten-day average of advancing stocks must lift out of the
+        oversold band and clear 61.5% within ten sessions. On the Jakarta listing that has
+        <em>never</em> happened — the highest reading on record is
+        <span id="zbt-record">—</span>. The upper band stands empty, which is the finding:
+        Indonesian rallies are carried by the index heavyweights, not the rank and file. A
+        trigger would be marked <span class="mark-key">▲</span> on the axis.
+      </p>
+      <div class="breadth-frame">
+        <canvas id="zbt-chart"></canvas>
+        <div class="bc-tip" id="zbt-tip"></div>
+      </div>
     </section>
 
     <section class="figure reveal" style="--d:7">
       <div class="figure-head">
         <span class="figure-no">Fig. IV</span>
-        <h2>Shinohara Intensity Ratio</h2>
-        <span class="figure-cap">IHSG weekly (26), Yahoo formula · Weak − Strong &gt; 100 = extremely oversold (rare)</span>
+        <h2>Market Momentum — Stochastic</h2>
+        <span class="figure-cap">IHSG weekly %K / %D (15,3,3) · &lt;20 oversold (buy zone), &gt;80 overbought</span>
       </div>
-      <div class="chart-box"><canvas id="shinohara-chart"></canvas></div>
+      <div class="breadth-frame">
+        <canvas id="stoch-chart"></canvas>
+        <div class="bc-tip" id="stoch-tip"></div>
+      </div>
+    </section>
+
+    <section class="figure reveal" style="--d:8">
+      <div class="figure-head">
+        <span class="figure-no">Fig. V</span>
+        <h2>Shinohara Intensity Ratio</h2>
+        <span class="figure-cap">IHSG weekly (26), Yahoo formula · the Weak − Strong spread</span>
+      </div>
+      <p class="figure-note">
+        Shinohara measures buying and selling pressure as two ratios; the reading is the
+        <em>gap</em> between them, so the gap itself is plotted. Above 100 — the shaded band —
+        the market is extremely oversold, a rare and historically bullish reading.
+      </p>
+      <div class="breadth-frame">
+        <canvas id="shinohara-chart"></canvas>
+        <div class="bc-tip" id="shinohara-tip"></div>
+      </div>
     </section>
 
     <!-- ─────────────  THE LEDGER (TABLE)  ───────────── -->
@@ -185,7 +221,6 @@
     </p>
   </footer>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="breadth-chart.js"></script>
   <script src="app.js"></script>
 </body>

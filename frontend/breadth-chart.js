@@ -27,6 +27,15 @@
       this.unit = opts.unit || '';
       // extra moving-average lines: [{ field, color, width, label, legend }]
       this.overlays = opts.overlays || [];
+      // Fixed y-domain. Needed when the meaning lives in absolute levels (a
+      // stochastic's 20/80 bands) rather than in the data's own spread.
+      this.yMin = (opts.yMin != null) ? opts.yMin : null;
+      this.yMax = (opts.yMax != null) ? opts.yMax : null;
+      // shaded value bands drawn behind the lines: [{ from, to, fill }]
+      this.zones = opts.zones || [];
+      // boolean row field; truthy rows get a marker on the x-axis
+      this.markField = opts.markField || null;
+      this.tipAd = opts.tipAd !== false; // show the adv/dec row in the tooltip
       this.hidden = new Set(); // line keys (field names, or 'daily') toggled off
       this.data = [];
       this.dpr = Math.max(1, window.devicePixelRatio || 1);
@@ -146,13 +155,45 @@
       ctx.stroke();
     }
 
+    // Shaded value bands (e.g. a stochastic's oversold / overbought zones).
+    // Clamped to the plot, so an open-ended band can pass Infinity.
+    _drawZones(p, scale) {
+      const ctx = this.ctx;
+      const clamp = (v) => Math.max(0, Math.min(p.h, scale.y(v)));
+      for (const z of this.zones) {
+        const yTop = clamp(z.to), yBot = clamp(z.from);
+        if (yBot - yTop <= 0) continue;
+        ctx.fillStyle = z.fill;
+        ctx.fillRect(p.x, p.y + yTop, p.w, yBot - yTop);
+      }
+    }
+
+    // Event markers: a gold pennant on the axis plus a full-height rule, for
+    // rows where markField is truthy (e.g. a breadth-thrust trigger).
+    _drawMarks(rows, p, n) {
+      if (!this.markField) return;
+      const ctx = this.ctx;
+      for (let i = 0; i < n; i++) {
+        if (!rows[i][this.markField]) continue;
+        const x = this._xAt(i, n, p);
+        ctx.strokeStyle = 'rgba(166,122,38,0.5)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x, p.y); ctx.lineTo(x, p.y + p.h); ctx.stroke();
+        ctx.fillStyle = '#a67a26';
+        ctx.beginPath();
+        ctx.moveTo(x, p.y + p.h - 8); ctx.lineTo(x - 4.5, p.y + p.h); ctx.lineTo(x + 4.5, p.y + p.h);
+        ctx.closePath(); ctx.fill();
+      }
+    }
+
     _drawXAxis(p, n) {
       const ctx = this.ctx;
       ctx.fillStyle = this.col.text;
       ctx.font = '11px JetBrains Mono, monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      const want = Math.min(8, n);
+      // ~90px per label, so narrow (phone) canvases thin the ticks out instead
+      // of overprinting them.
+      const want = Math.max(2, Math.min(8, n, Math.floor(p.w / 90)));
       // Over a multi-year window, MM-DD alone is ambiguous — show YYYY-MM instead.
       const multiYear = n > 1 && this.data[0].date.slice(0, 4) !== this.data[n - 1].date.slice(0, 4);
       for (let k = 0; k < want; k++) {
@@ -226,9 +267,12 @@
 
       this._drawGrid(p);
       if (dMin === Infinity) { this._drawXAxis(p, n); return; } // everything toggled off
+      if (this.yMin != null) dMin = this.yMin;
+      if (this.yMax != null) dMax = this.yMax;
       if (dMin === dMax) { dMin -= 1; dMax += 1; }
 
       const scale = this._scale(dMin, dMax, p.h);
+      this._drawZones(p, scale);
       this._sy = (v) => p.y + scale.y(v); // value→pixel, reused by the crosshair markers
       const lastVal = rows[rows.length - 1][field];
       const above = ref != null ? lastVal >= ref : lastVal >= 0;
@@ -244,13 +288,27 @@
         }
         if (pts.length) {
           const baseY = p.y + (ref != null ? scale.y(ref) : p.h);
-          ctx.beginPath(); ctx.moveTo(pts[0][0], baseY);
-          for (const [x, y] of pts) ctx.lineTo(x, y);
-          ctx.lineTo(pts[pts.length - 1][0], baseY); ctx.closePath();
-          ctx.fillStyle = fill; ctx.fill();
-          ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
-          for (const [x, y] of pts) ctx.lineTo(x, y);
-          ctx.strokeStyle = stroke; ctx.lineWidth = 1.8; ctx.stroke();
+          const area = new Path2D(), line = new Path2D();
+          area.moveTo(pts[0][0], baseY);
+          line.moveTo(pts[0][0], pts[0][1]);
+          for (const [x, y] of pts) { area.lineTo(x, y); line.lineTo(x, y); }
+          area.lineTo(pts[pts.length - 1][0], baseY); area.closePath();
+          // Paint above and below the reference separately: a series that
+          // crosses its neutral line must not read as one colour throughout.
+          const half = (top, h, fillCol, strokeCol) => {
+            if (h <= 0) return;
+            ctx.save();
+            ctx.beginPath(); ctx.rect(p.x, top, p.w, h); ctx.clip();
+            ctx.fillStyle = fillCol; ctx.fill(area);
+            ctx.strokeStyle = strokeCol; ctx.lineWidth = 1.8; ctx.stroke(line);
+            ctx.restore();
+          };
+          if (ref == null) {
+            half(p.y, p.h, fill, stroke); // no neutral line to split on
+          } else {
+            half(p.y, baseY - p.y, this.col.fill, this.col.up);
+            half(baseY, p.y + p.h - baseY, this.col.fillDown, this.col.down);
+          }
         }
       }
       // Faint unsmoothed "daily" values: a dot per session (a volatility cloud on
@@ -305,6 +363,7 @@
         if (y < p.y || y > p.y + p.h) continue;
         ctx.fillText(this._fmt(t) + this.unit, p.x + p.w + 6, y);
       }
+      this._drawMarks(rows, p, n);
       this._drawXAxis(p, n);
       this._drawSeriesLegend(p, stroke, mainVis, visOverlays);
     }
@@ -414,11 +473,12 @@
           rw.appendChild(el('b', null, fmt(r[this.rawField], 1) + this.unit));
           tip.appendChild(rw);
         }
-        const ad = el('div', 'bc-row');
-        ad.appendChild(el('span', null, 'adv / dec'));
-        const ab = el('b', null, r.advances + ' / ' + r.declines);
-        ad.appendChild(ab);
-        tip.appendChild(ad);
+        if (this.tipAd && r.advances != null) {
+          const ad = el('div', 'bc-row');
+          ad.appendChild(el('span', null, 'adv / dec'));
+          ad.appendChild(el('b', null, r.advances + ' / ' + r.declines));
+          tip.appendChild(ad);
+        }
       }
 
       tip.style.display = 'block';
