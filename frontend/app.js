@@ -422,19 +422,63 @@ function renderCards(data) {
 }
 
 // ── Data Table ──
-function renderTable(data) {
-  const tbody = document.querySelector('#data-table tbody');
-  // Show latest first
-  const reversed = [...data].reverse();
+// One spec per column drives the heading, its description and the cell, so the
+// three cannot drift apart. `tone` colours a cell against the reading's own
+// neutral point — 50% for breadth shares, 0 for spreads — matching the charts.
+const num = (v, dp = 1) => v == null ? '—' : v.toFixed(dp);
+const signed = (v, dp = 0) => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(dp);
+const above = (ref) => (v) => v == null ? null : (v >= ref ? 'td-positive' : 'td-negative');
 
-  tbody.innerHTML = reversed.map(d => `
-    <tr>
-      <td>${d.date}</td>
-      <td class="td-advance">${d.advances}</td>
-      <td class="td-decline">${d.declines}</td>
-      <td>${d.unchanged}</td>
-      <td class="${d.spread >= 0 ? 'td-positive' : 'td-negative'}">${d.spread >= 0 ? '+' : ''}${d.spread}</td>
-      <td class="${d.pctAdvancing != null && d.pctAdvancing >= 50 ? 'td-positive' : 'td-negative'}">${d.pctAdvancing != null ? d.pctAdvancing.toFixed(1) + '%' : '—'}</td>
-    </tr>
-  `).join('');
+const TABLE_COLS = [
+  { head: 'Date', desc: 'Trading session', get: d => d.date, num: false },
+  { head: 'IHSG', desc: 'Index close', get: d => d.ihsg == null ? '—' : Math.round(d.ihsg).toLocaleString() },
+  { head: 'Adv', desc: 'Companies that closed higher', get: d => d.advances, cls: () => 'td-advance' },
+  { head: 'Dec', desc: 'Companies that closed lower', get: d => d.declines, cls: () => 'td-decline' },
+  { head: 'Unch', desc: 'Closed flat, or did not trade', get: d => d.unchanged },
+  { head: 'Spread', desc: 'Advances minus declines', get: d => signed(d.spread), cls: d => above(0)(d.spread) },
+  { head: 'Ratio', desc: 'Advances per decline; 1.00 is even', get: d => num(d.ratio, 2), cls: d => above(1)(d.ratio) },
+  { head: '% Adv', desc: 'Share of trading companies that rose; 50% is neutral', get: d => d.pctAdvancing == null ? '—' : num(d.pctAdvancing) + '%', cls: d => above(50)(d.pctAdvancing) },
+  { head: '20d', desc: '20-day average of % Advancing', get: d => num(d.pctAdvancingMA), cls: d => above(50)(d.pctAdvancingMA) },
+  { head: '100d', desc: '100-day average of % Advancing', get: d => num(d.pctAdvancingMA100), cls: d => above(50)(d.pctAdvancingMA100) },
+  { head: '200d', desc: '200-day average of % Advancing', get: d => num(d.pctAdvancingMA200), cls: d => above(50)(d.pctAdvancingMA200) },
+  { head: 'McClellan', desc: '19 less 39-day EMA of the spread; 0 is neutral', get: d => signed(d.mcClellan, 1), cls: d => above(0)(d.mcClellan) },
+  { head: 'ZBT', desc: 'Zweig Breadth Thrust: 10-day EMA of % Advancing; triggers above 61.5', get: d => num(d.zbt), cls: d => above(50)(d.zbt) },
+  { head: '%K', desc: 'Weekly stochastic (15,3,3); below 20 oversold, above 80 overbought', get: d => num(d.stochK), cls: d => above(50)(d.stochK) },
+  { head: '%D', desc: 'Three-week average of %K', get: d => num(d.stochD), cls: d => above(50)(d.stochD) },
+  { head: 'W−S', desc: 'Shinohara Weak minus Strong; above 100 extremely oversold', get: d => num(d.shinSpread), cls: d => above(0)(d.shinSpread) },
+];
+
+function renderTableHead() {
+  const tr = document.querySelector('#data-table thead tr');
+  if (!tr || tr.children.length) return; // static across renders
+  for (const c of TABLE_COLS) {
+    const th = document.createElement('th');
+    if (c.num !== false) th.className = 'num';
+    th.scope = 'col';
+    th.title = c.desc;      // the column's description, on hover
+    th.textContent = c.head;
+    tr.appendChild(th);
+  }
+}
+
+function renderTable(data) {
+  renderTableHead();
+  const tbody = document.querySelector('#data-table tbody');
+  // Built through the DOM rather than innerHTML: every cell is set as text, so
+  // no field can ever be parsed as markup. One fragment keeps it to a single
+  // reflow across the ~4,000 rows of the full record.
+  const frag = document.createDocumentFragment();
+  for (let i = data.length - 1; i >= 0; i--) { // most recent session first
+    const d = data[i];
+    const tr = document.createElement('tr');
+    for (const c of TABLE_COLS) {
+      const td = document.createElement('td');
+      const cls = c.cls ? c.cls(d) : null;
+      if (cls) td.className = cls;
+      td.textContent = c.get(d);
+      tr.appendChild(td);
+    }
+    frag.appendChild(tr);
+  }
+  tbody.replaceChildren(frag);
 }

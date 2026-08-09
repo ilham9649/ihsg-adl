@@ -66,26 +66,32 @@
       <div class="stat">
         <div class="stat-label">Advancing</div>
         <div class="stat-value up" id="advances">—</div>
+        <div class="stat-note">Closed above yesterday</div>
       </div>
       <div class="stat">
         <div class="stat-label">Declining</div>
         <div class="stat-value down" id="declines">—</div>
+        <div class="stat-note">Closed below yesterday</div>
       </div>
       <div class="stat">
         <div class="stat-label">Unchanged</div>
         <div class="stat-value" id="unchanged">—</div>
+        <div class="stat-note">Flat, or never traded</div>
       </div>
       <div class="stat">
         <div class="stat-label">A / D Ratio</div>
         <div class="stat-value" id="ratio">—</div>
+        <div class="stat-note">Risers per faller; 1.00 is even</div>
       </div>
       <div class="stat">
         <div class="stat-label">Net Spread</div>
         <div class="stat-value" id="spread">—</div>
+        <div class="stat-note">Risers minus fallers</div>
       </div>
       <div class="stat">
         <div class="stat-label">McClellan</div>
         <div class="stat-value" id="mcclellan">—</div>
+        <div class="stat-note">19 less 39-day EMA of the spread</div>
       </div>
     </section>
 
@@ -113,6 +119,12 @@
         <h2>The Index Itself</h2>
         <span class="figure-cap">IHSG · daily open-high-low-close</span>
       </div>
+      <p class="figure-note">
+        The headline index, one candle per session: the body spans open to close, the wick the
+        day's full range. Green closed up, red closed down. The IHSG is weighted by company
+        size, so a handful of the largest constituents move it — which is exactly what the
+        breadth panels below are here to check it against.
+      </p>
       <div class="breadth-frame">
         <canvas id="ihsg-chart"></canvas>
         <div class="bc-tip" id="ihsg-tip"></div>
@@ -125,6 +137,12 @@
         <h2>The Breadth Line</h2>
         <span class="figure-cap">% Advancing · 20 / 100 / 200-day moving averages · 50% neutral</span>
       </div>
+      <p class="figure-note">
+        The share of trading companies that closed higher, counted one vote each — a bank worth
+        billions and a micro-cap count the same. Above the 50% line more stocks rose than fell.
+        Single sessions are noisy, so the faint dots are the raw daily readings and the lines are
+        their 20, 100 and 200-day averages. Green above the neutral line, red below.
+      </p>
       <div class="ma-checklist" id="ma-checklist" role="group" aria-label="Toggle lines">
         <label class="ma-check up"><input type="checkbox" data-key="pctAdvancingMA" checked> 20-day</label>
         <label class="ma-check gold"><input type="checkbox" data-key="pctAdvancingMA100" checked> 100-day</label>
@@ -164,6 +182,13 @@
         <h2>Market Momentum — Stochastic</h2>
         <span class="figure-cap">IHSG weekly %K / %D (15,3,3) · &lt;20 oversold (buy zone), &gt;80 overbought</span>
       </div>
+      <p class="figure-note">
+        Where this week's close sits inside the index's own range over the last fifteen weeks:
+        100% means it finished at the top of that range, 0% at the bottom. %K is the raw reading,
+        %D its three-week average. The bands mark the extremes — below 20 the index is oversold,
+        above 80 overbought. This one tracks <em>price</em>, not breadth, and runs on weekly bars,
+        so it needs a long reading period to say anything.
+      </p>
       <div class="breadth-frame">
         <canvas id="stoch-chart"></canvas>
         <div class="bc-tip" id="stoch-tip"></div>
@@ -192,20 +217,15 @@
       <div class="figure-head">
         <span class="figure-no">Tab. A</span>
         <h2>The Daily Record</h2>
-        <span class="figure-cap">Most recent sessions first</span>
+        <span class="figure-cap">Every figure on this page, most recent session first</span>
       </div>
+      <p class="figure-note">
+        One row per trading session, carrying each reading above. Hover a column heading for what
+        it measures. Scroll sideways for the full width.
+      </p>
       <div class="table-scroll">
         <table id="data-table">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th class="num">Adv</th>
-              <th class="num">Dec</th>
-              <th class="num">Unch</th>
-              <th class="num">Spread</th>
-              <th class="num">% Adv</th>
-            </tr>
-          </thead>
+          <thead><tr></tr></thead>
           <tbody></tbody>
         </table>
       </div>
