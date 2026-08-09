@@ -387,12 +387,21 @@ function renderCards(data) {
     heroPct.textContent = ordinal(rank);
   }
 
-  // Highest thrust reading ever recorded — quoted in the Fig. III standfirst,
-  // computed rather than hardcoded so it stays true as the record grows.
+  // Fig. III standfirst figures. Both are computed, never hardcoded: extending
+  // the history once turned a hardcoded "never happened" into a false claim.
   const zbtRecord = document.getElementById('zbt-record');
   if (zbtRecord) {
     const peak = Math.max(...allData.map(d => d.zbt).filter(v => v != null));
     zbtRecord.textContent = peak.toFixed(1) + '%';
+  }
+  const zbtCount = document.getElementById('zbt-count');
+  if (zbtCount) {
+    const hits = allData.filter(d => d.thrust);
+    const years = [...new Set(hits.map(d => d.date.slice(0, 4)))].join(' and ');
+    zbtCount.textContent = hits.length === 0 ? 'not once'
+      : hits.length === 1 ? `once, in ${years}`
+      : hits.length === 2 ? `twice, both in ${years}`
+      : `${hits.length} times, in ${years}`;
   }
 
   // Constituents actually counted in the latest session (transparency: the full
