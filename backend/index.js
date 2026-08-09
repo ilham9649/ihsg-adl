@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 
 import { getAllTickers } from './lib/tickers.js';
-import { fetchChart, fetchQuotes, computeSeries } from './scrapers/yahoo.js';
+import { fetchChart, fetchQuotes, computeSeries, isStaleComparison } from './scrapers/yahoo.js';
 import { getAllData, batchPutData, deleteDates, acquireRefreshLock, releaseRefreshLock } from './lib/db.js';
 
 const HEADERS = {
@@ -39,7 +39,7 @@ function getPath(event) {
 // stocks), so a run takes several minutes; ensure the Lambda timeout allows it
 // (900s is configured). Counts are folded per-day incrementally (see below) to
 // keep memory bounded for the large universe.
-const DAYS_BACK = 2800; // ~7.5 years of trading days (history back to ~2019)
+const DAYS_BACK = 6100; // ~16.7 calendar years (history back to ~2010)
 
 async function refreshData() {
   const locked = await acquireRefreshLock();
@@ -81,6 +81,9 @@ async function refreshData() {
             const prev = quotes[k - 1].adjClose;
             const curr = quotes[k].adjClose;
             const date = quotes[k].date;
+            // Don't classify against a stale previous close (suspension resume,
+            // or a ticker code IDX reassigned to a different company).
+            if (isStaleComparison(quotes[k - 1].date, date)) continue;
             let day = dayMap[date];
             if (!day) day = dayMap[date] = { date, advances: 0, declines: 0, unchanged: 0 };
             if (curr > prev) day.advances++;

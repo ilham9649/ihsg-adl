@@ -55,10 +55,19 @@ The Lambda handler (`backend/index.js`) supports both REST API v1 and HTTP API v
 
 Frontend (`frontend/app.js`) handles both formats when parsing API responses.
 
+### Delisted Companies (survivorship bias)
+`IDX_TICKERS` is a snapshot of who is listed **today**, so on its own the history is survivors-only — every firm that died is invisible on all past dates, biasing historical `% Advancing` upward (failing companies fall hard before they exit). `DELISTED_TICKERS` in `tickers.js` closes that gap; `getAllTickers()` returns both.
+
+**Yahoo serves full history for a delisted `.JK` symbol** right up to its last trading day (verified: all 10 of the 2025-07-21 delistings return complete bars back to 2009). So a delisted name costs nothing but its ticker code, and needs no special handling downstream — it simply has no bars after its exit, and the per-day fold only counts a ticker on dates it actually traded.
+
+The list is **incomplete** (2025 only; IDX delisted ~60–70 companies over 2010–2026). To extend it, drive `idx.co.id` → Market Data → Statistical Reports → Delisted Company **in a browser** (server-side fetches get 403, same as the main list), then verify with `node backend/audit-delisted.js` — it flags codes Yahoo never indexed (FINN, delisted 2021, returns nothing), duplicates, and long mid-series halts that could mean IDX reassigned the code. Note the 18 companies delisting 2026-11-10 are still in `IDX_TICKERS`; move them across after they go.
+
+> **`isStaleComparison` (`yahoo.js`)** skips the one price comparison that spans a gap of >30 days. A stock resuming from suspension often reopens ±70%, and a reassigned ticker code would compare one company's close to another's — both are noise, not breadth. IDX's watchlist board halts names for months, so this fires on real data (e.g. KRAH, halted 124 days from 2016-10-20).
+
 ### Ticker Universe
 `backend/lib/tickers.js` hardcodes the **complete IDX securities list (~957 tickers, all boards: Main/Development/Acceleration/Watchlist)**, scraped from the IDX official API (`idx.co.id` `GetSecuritiesStock`). It's hardcoded because IDX's API blocks server-side fetches (Cloudflare/403) and stockanalysis.com's free list caps at 500 — so live discovery from Lambda isn't possible. **Re-scrape periodically** to pick up new IPOs (drive `idx.co.id/en/market-data/stocks-data/stock-list` in a browser and fetch its API in-page). Many small/suspended names have no usable Yahoo data — `fetchQuotes` returns `[]` for those and they're excluded from the daily counts (~750-850 of 957 typically usable). All tickers suffixed `.JK`.
 
-> **Refresh scale & API Gateway 29s limit:** a ~957-ticker × 7.5-year scrape takes several minutes (batches of 6, 1.5s apart; daily counts folded incrementally to bound memory). The scheduled EventBridge run invokes the Lambda directly, bounded only by the Lambda timeout (900s — keep it there). The manual `POST /api/ad/refresh` **Refresh** button goes through API Gateway (~29s cap) so it returns 504 even though the Lambda keeps running and still writes the data. Treat the daily cron as the source of truth; big repopulations can be run locally against the prod table.
+> **Refresh scale & API Gateway 29s limit:** a ~967-ticker × 16-year scrape (`DAYS_BACK = 6100`, history to ~2010) takes ~5 minutes — measured ~300s, against the 900s Lambda cap (batches of 6, 1.5s apart; daily counts folded incrementally to bound memory). The scheduled EventBridge run invokes the Lambda directly, bounded only by the Lambda timeout (900s — keep it there). The manual `POST /api/ad/refresh` **Refresh** button goes through API Gateway (~29s cap) so it returns 504 even though the Lambda keeps running and still writes the data. Treat the daily cron as the source of truth; big repopulations can be run locally against the prod table.
 
 ### Yahoo Finance Scraper
 Uses Yahoo Finance v8 chart API directly (`/v8/finance/chart/{ticker}`) — no external library dependency. Rate limited by:
@@ -98,7 +107,7 @@ No hosted dev server, but you can verify before deploying:
 - **Frontend:** run a tiny static server over `frontend/` that returns a saved copy of the live API for `/api/ad` (`curl https://finance.sulaksono.id/api/ad -o /tmp/ad.json`), then drive it in a browser. All indicators are client-side, so this exercises real behavior against real data. (Charts render on canvas — screenshot to verify.) The weekly panels (Stochastic, Shinohara) need a **long** reading period to show anything; the default range is One Year for that reason.
 - **Backend / big repopulations:** run the handler locally against the **prod** DynamoDB table (region `ap-southeast-1`):
   `AWS_REGION=ap-southeast-1 TABLE_NAME=ihsg-adl node -e "import('./backend/index.js').then(m=>m.handler({source:'aws.events'}))"`
-  (~5 min for the full 957-ticker scrape; needs AWS creds). The API read path is unchanged, so the live site reflects the new data immediately — no deploy needed for a data-only change.
+  (~5 min for the full 967-ticker scrape; needs AWS creds). The API read path is unchanged, so the live site reflects the new data immediately — no deploy needed for a data-only change.
 - **Unit tests:** `cd backend && npm test`.
 - **Lambda debugging:** CloudWatch Logs.
 

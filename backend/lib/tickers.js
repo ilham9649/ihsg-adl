@@ -94,12 +94,38 @@ const IDX_TICKERS = [
   'AGII','AGRO','AGRS','AHAP','AIMS','PNSE','POLY','POOL','PPRO',
 ];
 
+// Companies REMOVED from the IDX listing. Without these the historical universe
+// is survivors-only: `IDX_TICKERS` is a snapshot of who is listed today, so any
+// firm that died is invisible on every past date. Because failing companies fall
+// hard before they go, that biases historical `% Advancing` upward.
+//
+// Yahoo still serves full history for a delisted `.JK` symbol right up to its
+// last trading day, so recovering one costs nothing but its ticker code. A
+// delisted name needs no special handling downstream: it simply has no bars
+// after its exit, and the per-day fold in `index.js` only counts a ticker on
+// dates where it actually traded.
+//
+// INCOMPLETE — verified delistings only. IDX delisted roughly 60–70 companies
+// between 2010 and 2026, and this covers 2025. To extend it, drive
+// `idx.co.id` → Market Data → Statistical Reports → Delisted Company in a
+// BROWSER (the site 403s server-side fetches, same as the main list) and paste
+// the codes in by year. Verify additions with `node backend/audit-delisted.js`:
+// not every old code survives in Yahoo's index (FINN, delisted 2021, returns
+// nothing), and a code IDX later reassigned would splice two companies together.
+const DELISTED_TICKERS = [
+  // Delisted 2025-07-21
+  'MAMI', 'FORZ', 'MYRX', 'KRAH', 'KPAS', 'KPAL', 'PRAS', 'NIPS', 'JKSW', 'HDTX',
+];
+
 /**
- * Breadth universe — the full IDX listing, suffixed with .JK for Yahoo.
+ * Breadth universe — every company that has been listed over the covered period:
+ * the current IDX listing plus known delistings, suffixed with .JK for Yahoo.
  */
 export async function getAllTickers() {
-  return IDX_TICKERS.map(t => t + '.JK');
+  return [...IDX_TICKERS, ...DELISTED_TICKERS].map(t => t + '.JK');
 }
+
+export { IDX_TICKERS, DELISTED_TICKERS };
 
 // Kept for backward compatibility / tests.
 const FALLBACK_TICKERS = IDX_TICKERS;

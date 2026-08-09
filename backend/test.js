@@ -6,8 +6,8 @@
 import { strictEqual, ok } from 'node:assert';
 import { test, describe } from 'node:test';
 
-import { buildDailyCounts, computeSeries } from './scrapers/yahoo.js';
-import { FALLBACK_TICKERS } from './lib/tickers.js';
+import { buildDailyCounts, computeSeries, isStaleComparison } from './scrapers/yahoo.js';
+import { FALLBACK_TICKERS, IDX_TICKERS, DELISTED_TICKERS, getAllTickers } from './lib/tickers.js';
 
 // Helper: assert the A/D Line cumulative invariant (adLine is a genuine running
 // sum of spreads, never resets).
@@ -143,5 +143,40 @@ describe('Ticker Discovery — FALLBACK_TICKERS', () => {
     ok(FALLBACK_TICKERS.every(t => /^[A-Z0-9]{3,6}$/.test(t)), 'all valid format');
     strictEqual(new Set(FALLBACK_TICKERS).size, FALLBACK_TICKERS.length, 'all unique');
     ok(['BBCA', 'BBRI', 'TLKM', 'ASII', 'UNVR'].every(t => FALLBACK_TICKERS.includes(t)), 'majors present');
+  });
+});
+
+describe('Delisted universe', () => {
+  test('delisted codes are valid, unique, and not already listed', async () => {
+    ok(DELISTED_TICKERS.every(t => /^[A-Z0-9]{3,6}$/.test(t)), 'all valid format');
+    strictEqual(new Set(DELISTED_TICKERS).size, DELISTED_TICKERS.length, 'all unique');
+    // A code in both lists would be counted twice every day it traded.
+    const listed = new Set(IDX_TICKERS);
+    const overlap = DELISTED_TICKERS.filter(t => listed.has(t));
+    strictEqual(overlap.length, 0, `delisted codes must not also be listed: ${overlap}`);
+
+    const universe = await getAllTickers();
+    strictEqual(universe.length, IDX_TICKERS.length + DELISTED_TICKERS.length, 'universe includes both');
+    ok(universe.every(t => t.endsWith('.JK')), 'all suffixed for Yahoo');
+    ok(universe.includes('MYRX.JK'), 'a delisted name reaches the scraper');
+  });
+});
+
+describe('isStaleComparison — cross-gap price moves', () => {
+  test('consecutive trading days compare normally', () => {
+    strictEqual(isStaleComparison('2026-03-16', '2026-03-17'), false);
+  });
+
+  test('a weekend or holiday week still compares', () => {
+    strictEqual(isStaleComparison('2026-03-27', '2026-04-08'), false, 'Idul Fitri break');
+  });
+
+  test('a months-long suspension does not compare', () => {
+    // KRAH really did halt from 2016-10-20 to 2017-02-21 before resuming.
+    strictEqual(isStaleComparison('2016-10-20', '2017-02-21'), true);
+  });
+
+  test('a reassigned ticker code does not splice two companies', () => {
+    strictEqual(isStaleComparison('2015-06-30', '2018-01-04'), true);
   });
 });

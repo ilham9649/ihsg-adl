@@ -67,6 +67,19 @@ export async function fetchQuotes(ticker, daysBack = 60) {
   }
 }
 
+// A price move is only meaningful against a RECENT previous close. Two bars far
+// apart mean the stock was suspended in between (common on the IDX watchlist
+// board, where names halt for months) or — if IDX later reassigned the ticker
+// code — that the two bars belong to different companies. Either way the single
+// comparison across the gap is noise: a resumed stock often reopens ±70%, and a
+// reassigned code compares one company's close to another's. Skip that one
+// comparison; the rest of both stretches still count normally.
+const MAX_BAR_GAP_DAYS = 30;
+
+export function isStaleComparison(prevDate, currDate) {
+  return (new Date(currDate) - new Date(prevDate)) / 86400000 > MAX_BAR_GAP_DAYS;
+}
+
 /**
  * Build per-day advance/decline/unchanged counts from per-ticker direction arrays.
  * Returns a map: { 'YYYY-MM-DD': { date, advances, declines, unchanged } }.
