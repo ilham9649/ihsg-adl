@@ -484,6 +484,24 @@ main { max-width: var(--maxw); margin: 0 auto; }
 .bc-tip .bc-row b { font-weight: 700; }
 
 /* ─────────────  LEDGER TABLE  ───────────── */
+/* Filter box — the daily record and the valuation ranking both use it */
+.search-input {
+  font-family: var(--mono);
+  font-size: .78rem;
+  letter-spacing: .06em;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  padding: 8px 12px;
+  min-width: 190px;
+}
+.search-input:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-color: var(--ink);
+}
+.search-input::placeholder { color: var(--ink-faint); }
+
 .ledger { padding: 34px 0 10px; }
 .table-scroll { overflow-x: auto; max-height: 560px; overflow-y: auto; border-top: 2px solid var(--ink); }
 #data-table {
@@ -497,7 +515,8 @@ main { max-width: var(--maxw); margin: 0 auto; }
   top: 0;
   background: var(--paper-deep);
   text-align: left;
-  cursor: help; /* each heading carries its description in a title tooltip */
+  cursor: pointer; /* headings sort; the description is still on the title */
+  user-select: none;
   font-weight: 700;
   font-size: .62rem;
   letter-spacing: .16em;
@@ -508,6 +527,12 @@ main { max-width: var(--maxw); margin: 0 auto; }
   white-space: nowrap;
 }
 #data-table th.num { text-align: right; }
+#data-table thead th:hover { color: var(--ink); background: var(--rule-soft); }
+#data-table thead th:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+/* The sorted column carries its direction; the others show nothing, so the
+   heading row stays a row of labels rather than a row of arrows. */
+#data-table thead th[data-sorted="asc"]::after  { content: ' ▲'; color: var(--gold); }
+#data-table thead th[data-sorted="desc"]::after { content: ' ▼'; color: var(--gold); }
 #data-table td {
   padding: 9px 14px;
   border-bottom: 1px solid var(--rule-soft);

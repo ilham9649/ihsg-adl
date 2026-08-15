@@ -126,6 +126,8 @@
           <option value="0">Full Record</option>
         </select>
       </div>
+      <span class="controls-label">Find Session</span>
+      <input type="search" id="date-filter" class="search-input" placeholder="2019, or 2026-03…" aria-label="Filter the daily record by date">
     </div>
 
     <!-- ─────────────  FIGURES  ───────────── -->
@@ -236,8 +238,9 @@
         <span class="figure-cap">Every figure on this page, most recent session first</span>
       </div>
       <p class="figure-note">
-        One row per trading session, carrying each reading above. Hover a column heading for what
-        it measures. Scroll sideways for the full width.
+        One row per trading session, carrying each reading above. Click a column heading to sort by
+        it — twice to reverse. The Reading Period only ever slices backwards from today, so to reach
+        a particular stretch, type it into <em>Find Session</em>. Scroll sideways for the full width.
       </p>
       <div class="table-scroll">
         <table id="data-table">
@@ -245,6 +248,7 @@
           <tbody></tbody>
         </table>
       </div>
+      <p class="figure-note" id="record-count"></p>
     </section>
   </main>
 
