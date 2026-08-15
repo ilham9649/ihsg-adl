@@ -25,17 +25,33 @@
 
     <div class="masthead-sub">
       <span class="flourish">—— ✦ ——</span>
-      <p>A daily reading of the Jakarta market — index, breadth &amp; momentum</p>
+      <p>A daily reading of the Jakarta market</p>
       <span class="flourish">—— ✦ ——</span>
-    </div>
-
-    <div class="dateline">
-      <span id="last-updated" class="dateline-date">Loading edition…</span>
-      <span class="dateline-sep">·</span>
-      <button id="refresh-btn" class="btn-refresh" title="Re-run the breadth tally">Re-tally</button>
     </div>
     <div class="masthead-rule bottom"></div>
   </header>
+
+  <!-- ─────────────  SECTIONS  ─────────────
+       One paper, two departments. The current one is inked solid — on a printed
+       section tab the heaviest mark is the one you find by thumb. -->
+  <nav class="sections" aria-label="Sections of this edition">
+    <a class="section-tab is-current" href="index.html" aria-current="page">
+      <span class="section-letter">A</span>
+      <span class="section-name">Breadth &amp; Momentum</span>
+      <span class="section-desc">How many rose, and how the index moved</span>
+    </a>
+    <a class="section-tab" href="valuation.html">
+      <span class="section-letter">B</span>
+      <span class="section-name">Valuation</span>
+      <span class="section-desc">What the listing is worth</span>
+    </a>
+  </nav>
+
+  <div class="dateline section-dateline">
+    <span id="last-updated" class="dateline-date">Loading edition…</span>
+    <span class="dateline-sep">·</span>
+    <button id="refresh-btn" class="btn-refresh" title="Re-run the breadth tally">Re-tally</button>
+  </div>
 
   <main>
     <!-- ─────────────  LEDE / HERO  ───────────── -->

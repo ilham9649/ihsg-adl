@@ -8,6 +8,7 @@ import { test, describe } from 'node:test';
 
 import { buildDailyCounts, computeSeries, isStaleComparison } from './scrapers/yahoo.js';
 import { FALLBACK_TICKERS, IDX_TICKERS, DELISTED_TICKERS, getAllTickers } from './lib/tickers.js';
+import { dcfPerShare, residualIncomePerShare, isFinancial, median, trailingTwelveMonths, mostRecent, DISCOUNT_RATE, TERMINAL_GROWTH } from './scrapers/valuation.js';
 
 // Helper: assert the A/D Line cumulative invariant (adLine is a genuine running
 // sum of spreads, never resets).
@@ -178,5 +179,268 @@ describe('isStaleComparison — cross-gap price moves', () => {
 
   test('a reassigned ticker code does not splice two companies', () => {
     strictEqual(isStaleComparison('2015-06-30', '2018-01-04'), true);
+  });
+});
+
+// ── Valuation ──
+
+// One year of annual figures, oldest first, in the shape fetchFundamentals returns.
+function annual(...values) {
+  return values.map((value, i) => ({ date: `${2022 + i}-12-31`, value }));
+}
+
+describe('dcfPerShare — operating companies', () => {
+  test('a no-growth company discounts to its hand-computed value', () => {
+    // 100 FCF, flat revenue, 1 share, no debt or cash. Stage one is five flat
+    // payments; only the terminal value grows at 4%.
+    let expected = 0;
+    for (let t = 1; t <= 5; t++) expected += 100 / Math.pow(1 + DISCOUNT_RATE, t);
+    expected += ((100 * (1 + TERMINAL_GROWTH)) / (DISCOUNT_RATE - TERMINAL_GROWTH)) / Math.pow(1 + DISCOUNT_RATE, 5);
+
+    const v = dcfPerShare({
+      annualFreeCashFlow: annual(100, 100, 100),
+      annualTotalRevenue: annual(500, 500, 500),
+      annualOrdinarySharesNumber: annual(1, 1, 1),
+    });
+    ok(Math.abs(v.fairValue - expected) < 1e-6, `expected ${expected}, got ${v.fairValue}`);
+    strictEqual(v.model, 'dcf');
+  });
+
+  test('net debt reduces equity value one-for-one', () => {
+    const base = { annualFreeCashFlow: annual(100, 100), annualTotalRevenue: annual(500, 500), annualOrdinarySharesNumber: annual(10, 10) };
+    const clean = dcfPerShare(base);
+    const levered = dcfPerShare({ ...base, annualTotalDebt: annual(200, 200) });
+    ok(Math.abs((clean.fairValue - levered.fairValue) - 20) < 1e-6, '200 of debt over 10 shares is 20 per share');
+  });
+
+  test('growth is capped, so a fast grower cannot run away with the ranking', () => {
+    const v = dcfPerShare({
+      annualFreeCashFlow: annual(100, 100),
+      annualTotalRevenue: annual(100, 1000), // 900% revenue growth
+      annualOrdinarySharesNumber: annual(1, 1),
+    });
+    ok(v.growth <= 0.15 + 1e-9, `growth ${v.growth} must be capped at 15%`);
+  });
+
+  test('negative free cash flow yields no valuation rather than a wrong one', () => {
+    strictEqual(dcfPerShare({
+      annualFreeCashFlow: annual(-50, -80),
+      annualTotalRevenue: annual(500, 600),
+      annualOrdinarySharesNumber: annual(1, 1),
+    }), null);
+  });
+});
+
+describe('residualIncomePerShare — banks', () => {
+  test('a bank earning exactly its cost of equity is worth book value', () => {
+    // ROE == discount rate leaves zero excess return at every horizon.
+    const v = residualIncomePerShare({
+      annualStockholdersEquity: annual(1000, 1000),
+      annualNetIncome: annual(130, 130),
+      annualOrdinarySharesNumber: annual(10, 10),
+      annualCashDividendsPaid: annual(-130, -130),
+    });
+    ok(Math.abs(v.fairValue - 100) < 1e-6, `expected book value 100/share, got ${v.fairValue}`);
+    strictEqual(v.model, 'residual-income');
+  });
+
+  test('a bank earning above its cost of equity is worth more than book', () => {
+    const v = residualIncomePerShare({
+      annualStockholdersEquity: annual(1000, 1000),
+      annualNetIncome: annual(200, 200), // 20% ROE
+      annualOrdinarySharesNumber: annual(10, 10),
+      annualCashDividendsPaid: annual(-100, -100),
+    });
+    ok(v.fairValue > 100, `20% ROE must price above book, got ${v.fairValue}`);
+    ok(Math.abs(v.roe - 0.2) < 1e-9);
+  });
+
+  test('a bank earning below its cost of equity is worth less than book', () => {
+    const v = residualIncomePerShare({
+      annualStockholdersEquity: annual(1000, 1000),
+      annualNetIncome: annual(50, 50), // 5% ROE
+      annualOrdinarySharesNumber: annual(10, 10),
+      annualCashDividendsPaid: annual(-25, -25),
+    });
+    ok(v.fairValue < 100, `5% ROE must price below book, got ${v.fairValue}`);
+  });
+
+  test('retained-earnings growth stays below the discount rate', () => {
+    // 40% ROE with nothing paid out implies 40% sustainable growth, which would
+    // make the terminal value negative if it were not capped.
+    const v = residualIncomePerShare({
+      annualStockholdersEquity: annual(1000, 1000),
+      annualNetIncome: annual(400, 400),
+      annualOrdinarySharesNumber: annual(10, 10),
+      annualCashDividendsPaid: annual(0, 0),
+    });
+    ok(v.growth < DISCOUNT_RATE, `growth ${v.growth} must stay below the discount rate`);
+    ok(v.fairValue > 0 && isFinite(v.fairValue), `fair value must be finite and positive, got ${v.fairValue}`);
+  });
+
+  test('a loss-making bank yields no valuation', () => {
+    strictEqual(residualIncomePerShare({
+      annualStockholdersEquity: annual(1000, 1000),
+      annualNetIncome: annual(-50, -80),
+      annualOrdinarySharesNumber: annual(10, 10),
+    }), null);
+  });
+});
+
+describe('isFinancial — routes a ticker to the right model', () => {
+  test('a bank uses the excess-return model', () => {
+    ok(isFinancial({ sector: 'Financial Services', industry: 'Banks—Regional' }));
+  });
+
+  test('a telco does not', () => {
+    strictEqual(isFinancial({ sector: 'Communication Services' }), false);
+  });
+
+  test('an unknown sector falls back to the cash flow model', () => {
+    strictEqual(isFinancial({}), false);
+  });
+});
+
+describe('median — normalizing a volatile cash flow series', () => {
+  test('an odd-length series takes the middle value', () => {
+    strictEqual(median(annual(10, 500, 20)), 20);
+  });
+
+  test('an even-length series averages the middle pair', () => {
+    strictEqual(median(annual(10, 20, 30, 40)), 25);
+  });
+
+  test('one exceptional year does not set the valuation', () => {
+    // Three ordinary years and one asset-sale year. Using the latest figure
+    // would turn a windfall into a perpetuity; the median must not.
+    const windfall = dcfPerShare({
+      annualFreeCashFlow: annual(100, 100, 100, 900),
+      annualTotalRevenue: annual(500, 500, 500, 500),
+      annualOrdinarySharesNumber: annual(1, 1, 1, 1),
+    });
+    const ordinary = dcfPerShare({
+      annualFreeCashFlow: annual(100, 100, 100, 100),
+      annualTotalRevenue: annual(500, 500, 500, 500),
+      annualOrdinarySharesNumber: annual(1, 1, 1, 1),
+    });
+    ok(windfall.fairValue < ordinary.fairValue * 2,
+      `a single 9x year must not multiply the valuation: ${windfall.fairValue} vs ${ordinary.fairValue}`);
+  });
+
+  test('a company that is usually cash-negative is not valued on its one good year', () => {
+    strictEqual(dcfPerShare({
+      annualFreeCashFlow: annual(-100, -80, 300, -60),
+      annualTotalRevenue: annual(500, 500, 500, 500),
+      annualOrdinarySharesNumber: annual(1, 1, 1, 1),
+    }), null);
+  });
+});
+
+// Quarterly points, oldest first, in the shape fetchFundamentals returns.
+function quarters(pairs) {
+  return pairs.map(([date, value]) => ({ date, value }));
+}
+
+describe('trailingTwelveMonths — a year, or nothing', () => {
+  test('four consecutive quarters sum to a trailing year', () => {
+    const ttm = trailingTwelveMonths(quarters([
+      ['2025-09-30', 10], ['2025-12-31', 20], ['2026-03-31', 30], ['2026-06-30', 40],
+    ]));
+    strictEqual(ttm.value, 100);
+    strictEqual(ttm.date, '2026-06-30', 'reports the period it actually ends on');
+  });
+
+  test('a missing quarter is rejected rather than silently spanning fifteen months', () => {
+    // BBCA really is missing 2025-09-30. Its last four points run Jun-25 to
+    // Jun-26 — four values, but not four consecutive quarters.
+    strictEqual(trailingTwelveMonths(quarters([
+      ['2025-03-31', 14.1], ['2025-06-30', 14.9], ['2025-12-31', 14.1],
+      ['2026-03-31', 14.7], ['2026-06-30', 14.9],
+    ])), null);
+  });
+
+  test('fewer than four quarters yields nothing', () => {
+    strictEqual(trailingTwelveMonths(quarters([
+      ['2026-03-31', 30], ['2026-06-30', 40],
+    ])), null);
+  });
+
+  test('only the most recent four are considered', () => {
+    const ttm = trailingTwelveMonths(quarters([
+      ['2024-03-31', 999],
+      ['2025-09-30', 10], ['2025-12-31', 20], ['2026-03-31', 30], ['2026-06-30', 40],
+    ]));
+    strictEqual(ttm.value, 100, 'the stale 2024 point must not leak in');
+  });
+});
+
+describe('mostRecent — snapshots take the newest filing', () => {
+  test('a quarterly snapshot beats an older annual one', () => {
+    const point = mostRecent(
+      quarters([['2025-12-31', 100]]),
+      quarters([['2026-06-30', 130]]),
+    );
+    strictEqual(point.value, 130);
+  });
+
+  test('the annual figure wins when no quarterly filing is newer', () => {
+    const point = mostRecent(
+      quarters([['2025-12-31', 100]]),
+      quarters([['2025-06-30', 80]]),
+    );
+    strictEqual(point.value, 100);
+  });
+
+  test('missing series are skipped', () => {
+    strictEqual(mostRecent(undefined, null, quarters([['2026-06-30', 7]])).value, 7);
+  });
+});
+
+describe('valuation on trailing accounts', () => {
+  test('the trailing year joins the annual run as one more observation', () => {
+    // Four flat annual years at 100, then a trailing year at 300. The median of
+    // five observations moves up one step — it does not jump to the newest.
+    const withTrailing = dcfPerShare({
+      annualFreeCashFlow: annual(100, 100, 100, 100),
+      annualTotalRevenue: annual(500, 500, 500, 500),
+      annualOrdinarySharesNumber: annual(1, 1, 1, 1),
+      quarterlyFreeCashFlow: quarters([
+        ['2026-06-30', 75], ['2026-03-31', 75], ['2025-12-31', 75], ['2025-09-30', 75],
+      ].reverse()),
+    });
+    strictEqual(withTrailing.basis, 'trailing');
+    strictEqual(withTrailing.asOf, '2026-06-30');
+  });
+
+  test('a holed quarterly series falls back to the annual basis', () => {
+    const v = dcfPerShare({
+      annualFreeCashFlow: annual(100, 100, 100),
+      annualTotalRevenue: annual(500, 500, 500),
+      annualOrdinarySharesNumber: annual(1, 1, 1),
+      quarterlyFreeCashFlow: quarters([
+        ['2025-03-31', 25], ['2025-06-30', 25], ['2025-12-31', 25], ['2026-03-31', 25],
+      ]),
+    });
+    strictEqual(v.basis, 'annual', 'a gap must not be reported as a trailing year');
+  });
+
+  test('a bank uses trailing earnings against its newest book value', () => {
+    const v = residualIncomePerShare({
+      annualStockholdersEquity: annual(1000, 1000),
+      annualNetIncome: annual(130, 130),
+      annualOrdinarySharesNumber: annual(10, 10),
+      annualCashDividendsPaid: annual(-130, -130),
+      // Newer book, and a trailing year of earnings well above the annual run.
+      quarterlyStockholdersEquity: quarters([['2026-06-30', 1000]]),
+      quarterlyNetIncome: quarters([
+        ['2025-09-30', 50], ['2025-12-31', 50], ['2026-03-31', 50], ['2026-06-30', 50],
+      ]),
+      quarterlyCashDividendsPaid: quarters([
+        ['2025-09-30', -25], ['2025-12-31', -25], ['2026-03-31', -25], ['2026-06-30', -25],
+      ]),
+    });
+    strictEqual(v.basis, 'trailing');
+    ok(Math.abs(v.roe - 0.2) < 1e-9, `ROE must come from the trailing year, got ${v.roe}`);
+    ok(v.fairValue > 100, 'a 20% ROE against 13% required prices above book');
   });
 });

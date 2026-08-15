@@ -27,10 +27,12 @@ jobs:
         run: |
           aws s3 sync frontend/ s3://finance.sulaksono.id/ \
             --delete \
-            --cache-control "index.html=no-cache,max-age=0" \
-            --exclude "index.html"
-          aws s3 cp frontend/index.html s3://finance.sulaksono.id/index.html \
-            --cache-control "no-cache,max-age=0"
+            --exclude "*.html"
+          # Every page is served no-cache, so a redeploy is never stale.
+          for page in index valuation; do
+            aws s3 cp "frontend/$page.html" "s3://finance.sulaksono.id/$page.html" \
+              --cache-control "no-cache,max-age=0"
+          done
 
       - name: Invalidate CloudFront
         # Distribution ID for finance.sulaksono.id. Inlined as a literal (not a

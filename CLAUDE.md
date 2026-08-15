@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Serverless IHSG (Jakarta Composite Index) market dashboard — **"The Jakarta Ledger"** (editorial broadsheet UI). Tracks the **full IDX listing (~957 stocks, all boards)** daily. The backend computes per-day breadth metrics (**% Advancing**, spread, A/D ratio, McClellan, `adLine`) and stores the IHSG index OHLC; the frontend adds index-price and momentum views. Panels: IHSG candles, the % Advancing breadth line (20/100/200-day MA ribbon), the Zweig Breadth Thrust, weekly Stochastic, and the Shinohara Intensity Ratio. (The A/D Ratio and McClellan *chart panels* were removed from the UI; those values are still computed and shown in the top indicator strip.)
+Serverless IHSG (Jakarta Composite Index) market dashboard — **"The Jakarta Ledger"** (editorial broadsheet UI). Two pages: `index.html` (breadth & momentum) and `valuation.html` (intrinsic value, cheapest to dearest — see *Valuation page* below). Tracks the **full IDX listing (~957 stocks, all boards)** daily. The backend computes per-day breadth metrics (**% Advancing**, spread, A/D ratio, McClellan, `adLine`) and stores the IHSG index OHLC; the frontend adds index-price and momentum views. Panels: IHSG candles, the % Advancing breadth line (20/100/200-day MA ribbon), the Zweig Breadth Thrust, weekly Stochastic, and the Shinohara Intensity Ratio. (The A/D Ratio and McClellan *chart panels* were removed from the UI; those values are still computed and shown in the top indicator strip.)
 
 > **Headline breadth = % Advancing, NOT the cumulative A/D Line.** A raw cumulative A/D Line (running sum of advances−declines) is not a mean-reverting oscillator: over 2023–2026 it drifts down ~1.5k on the liquid set and ~16k on the broad ~500 universe, because Indonesia's equal-weight breadth was persistently negative while the cap-weighted IHSG was held up by a few mega-caps. This is **genuine breadth, not a computation bug** — verified: switching raw→adjusted close removes only ~5–11% of the drift, and a volume/forward-fill filter removes ~0%. So the dashboard leads with `pctAdvancing` = advances/(advances+declines)×100, which oscillates around 50%. `adLine` is still computed and stored as a raw datum (and its cumulative invariant is unit-tested) but is not charted. See `computeSeries` in `backend/scrapers/yahoo.js`.
 
@@ -91,6 +91,27 @@ Everything the frontend charts is **derived in the browser** from what the API a
 - **Cross-chart hover sync** (`HoverSync`) — hovering any panel highlights the same date on all of them (all panels share the filtered-data index).
 - **Reading period** — `getFilteredData` slices `allData` by trailing row count, plus a special `ytd` value (filter from Jan 1 of the current year).
 
+### Valuation page (`frontend/valuation.html`)
+A **second page** — "The Valuation Column" — ranking the IDX listing cheapest to dearest by estimated intrinsic value. Unlike every indicator on the front page, this is **not** computed client-side: the frontend only filters and renders what `GET /api/valuation` returns.
+
+**Two models, because one does not fit both kinds of business** (`backend/scrapers/valuation.js`):
+- **Operating companies → two-stage DCF.** 5 years of FCF grown at the company's revenue CAGR (clamped 0–15%), Gordon terminal value, discounted at 13%. Equity = EV − debt + cash.
+- **Financials → residual income (excess return).** ⚠️ **Never run a FCF-DCF on a bank.** Yahoo reports 75T "free cash flow" for BBCA — that is deposit and lending flow, i.e. the balance sheet, not owner earnings, and a DCF reads it as enormous wealth. The excess-return model values a bank as `book value + PV[(ROE − Ke) × book]`, so a bank earning exactly its cost of equity is worth exactly book. Growth is the sustainable rate `ROE × (1 − payout)`, capped below the discount rate or the terminal value goes infinite/negative. Routed by `isFinancial()` on the Yahoo `sector` field.
+
+Both return a per-share number, so the two sets rank in one list.
+
+> **Data source: `ws/fundamentals-timeseries`, not `quoteSummary`.** The `v10/finance/quoteSummary` endpoint now returns **401** (needs a crumb + cookie). The fundamentals-timeseries endpoint serves annual FCF, revenue, debt, cash, net income, equity, dividends and share count with **no auth**. Sector/industry comes from `v1/finance/search` — also free. Do not "fix" this by reintroducing quoteSummary.
+
+**Known limits — these are honest constraints, not bugs to patch:** Yahoo publishes only ~4 years of annuals (from ~2022), so growth rests on a short history; every name is discounted at a flat 13% (no per-name beta — four annual reports cannot support that precision); loss-making and non-filing companies get **no valuation** and are absent from the table rather than shown as cheap. The page states all of this in its method note. It ranks; it does not price.
+
+**The spread figure** (`renderSpread` in `valuation.js`) is the page's signature: one hairline per company on a `log₂(fairValue / price)` axis, **left = cheap**, drawn as inline SVG (not `BreadthChart` — that panel is built for time series, and this is a 1-D distribution; no library was added). Log scale because the raw discount runs −1240%…+685% and collapses to a smear on a linear axis. The axis floor is `VOID_FLOOR = -6`; below that the estimate is under a sixtieth of the price, which is an artefact of rounding a near-zero fair value rather than a reading, so those join the **no-value block** past a broken-axis mark. That block is ~118 of 390 — the biggest single finding on the page, so it is deliberately the heaviest object in the figure. Hairlines are drawn at low opacity so crowding darkens the field on its own. Filtering the table dims non-matching hairlines rather than re-scaling the figure, which would make the hero jump while someone types.
+
+> **Readout text is built from DOM nodes, never `innerHTML`.** `ticker`/`name` come straight from Yahoo. The table takes the same care for the same reason.
+
+**Storage:** one DynamoDB item, `date = "_valuation"`, holding the whole ranking as a JSON string plus `attempted`. Read and written whole, never queried per ticker. `getAllData()` filters on `attribute_exists(advances)` so this row (and the refresh lock) can never reach the daily-series parser.
+
+**Scheduling:** valuations move only when a company files, so this runs on its **own** trigger — `POST /api/valuation/refresh`, or an EventBridge event with `job: "valuation"`. It must **not** share the daily breadth cron: each ticker costs three Yahoo calls (~967 × 3), so the two jobs together would exceed the 900s Lambda timeout. ⚠️ The second EventBridge rule lives in the infrastructure repo and is **not yet created** — until it is, run the refresh manually.
+
 ### Deployment
 Push to `main` triggers GitHub Actions:
 1. Frontend: `aws s3 sync` to S3, CloudFront invalidation
@@ -105,6 +126,9 @@ Push to `main` triggers GitHub Actions:
 No hosted dev server, but you can verify before deploying:
 
 - **Frontend:** run a tiny static server over `frontend/` that returns a saved copy of the live API for `/api/ad` (`curl https://finance.sulaksono.id/api/ad -o /tmp/ad.json`), then drive it in a browser. All indicators are client-side, so this exercises real behavior against real data. (Charts render on canvas — screenshot to verify.) The weekly panels (Stochastic, Shinohara) need a **long** reading period to show anything; the default range is One Year for that reason.
+- **Valuation:** `buildValuations` needs no AWS creds — run it straight to a file and serve that as `/api/valuation`:
+  `node -e "import('./backend/scrapers/valuation.js').then(async m=>{const{getAllTickers}=await import('./backend/lib/tickers.js');console.log(JSON.stringify(await m.buildValuations(await getAllTickers())))}"`
+  (~10 min for the full universe at three calls per ticker). A single name is quick: `valuateTicker('BBCA.JK')`.
 - **Backend / big repopulations:** run the handler locally against the **prod** DynamoDB table (region `ap-southeast-1`):
   `AWS_REGION=ap-southeast-1 TABLE_NAME=ihsg-adl node -e "import('./backend/index.js').then(m=>m.handler({source:'aws.events'}))"`
   (~5 min for the full 967-ticker scrape; needs AWS creds). The API read path is unchanged, so the live site reflects the new data immediately — no deploy needed for a data-only change.

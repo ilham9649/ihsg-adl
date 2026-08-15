@@ -4,7 +4,8 @@
 
 import { getAllTickers } from './lib/tickers.js';
 import { fetchChart, fetchQuotes, computeSeries, isStaleComparison } from './scrapers/yahoo.js';
-import { getAllData, batchPutData, deleteDates, acquireRefreshLock, releaseRefreshLock } from './lib/db.js';
+import { buildValuations } from './scrapers/valuation.js';
+import { getAllData, batchPutData, deleteDates, putValuation, getValuation, acquireRefreshLock, releaseRefreshLock } from './lib/db.js';
 
 const HEADERS = {
   'Content-Type': 'application/json',
@@ -144,9 +145,38 @@ async function refreshData() {
   }
 }
 
+// Valuations move only when a company files, so this runs on its own schedule —
+// not with the daily breadth job. Each ticker costs three Yahoo calls, so the
+// two jobs together would exceed the 900s Lambda timeout.
+async function refreshValuations() {
+  const tickers = await getAllTickers();
+  console.log(`Valuing ${tickers.length} tickers`);
+
+  const { rows, failed } = await buildValuations(tickers);
+  if (rows.length === 0) {
+    return { success: false, message: 'No valuations computed', tickersFailed: failed };
+  }
+
+  await putValuation(rows, tickers.length);
+  console.log(`Valuation complete: ${rows.length} valued, ${failed} without usable fundamentals`);
+
+  return {
+    success: true,
+    message: 'Refreshed valuations',
+    tickersValued: rows.length,
+    tickersFailed: failed,
+    cheapest: rows[0]?.ticker,
+  };
+}
+
 export const handler = async (event) => {
   try {
     if (event.source === 'aws.events') {
+      if (event.job === 'valuation') {
+        console.log('Scheduled valuation triggered');
+        const result = await refreshValuations();
+        return { statusCode: 200, body: JSON.stringify(result) };
+      }
       console.log('Scheduled refresh triggered');
       const result = await refreshData();
       return { statusCode: 200, body: JSON.stringify(result) };
@@ -166,6 +196,16 @@ export const handler = async (event) => {
 
     if (method === 'POST' && (path === '/api/ad/refresh' || path === '/api/ad/refresh/')) {
       const result = await refreshData();
+      return response(200, result);
+    }
+
+    if (method === 'GET' && (path === '/api/valuation' || path === '/api/valuation/')) {
+      const { updatedAt, attempted, rows } = await getValuation();
+      return response(200, { success: true, count: rows.length, attempted, updatedAt, data: rows });
+    }
+
+    if (method === 'POST' && (path === '/api/valuation/refresh' || path === '/api/valuation/refresh/')) {
+      const result = await refreshValuations();
       return response(200, result);
     }
 

@@ -111,6 +111,78 @@ footer .masthead-rule { max-width: var(--maxw); margin: 0 auto 18px; }
 }
 .flourish { color: var(--gold); letter-spacing: .1em; font-size: .8rem; white-space: nowrap; }
 
+/* ─────────────  SECTION SPINE  ─────────────
+   Two departments of one paper. The current one is a solid ink slab: on a
+   printed section tab the heaviest mark is the one you find by thumb, and in a
+   page built entirely from hairlines nothing lighter would register. */
+.sections {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  border-bottom: 2px solid var(--ink);
+}
+.section-tab {
+  display: block;
+  padding: 16px 22px 18px;
+  text-decoration: none;
+  color: var(--ink-soft);
+  background: transparent;
+  transition: background .25s, color .25s;
+}
+.section-tab + .section-tab { border-left: 1px solid var(--rule); }
+.section-tab:hover { background: rgba(166,122,38,.1); color: var(--ink); }
+.section-tab:focus-visible { outline: 2px solid var(--gold); outline-offset: -4px; }
+
+.section-tab.is-current {
+  background: var(--ink);
+  color: var(--paper);
+  cursor: default;
+}
+.section-tab.is-current:hover { background: var(--ink); color: var(--paper); }
+
+.section-letter {
+  font-family: var(--mono);
+  font-size: .62rem;
+  font-weight: 700;
+  letter-spacing: .3em;
+  color: var(--gold);
+}
+/* The accent gold is mixed for paper; against the inked tab it drops to about
+   3.5:1, so the current section's letter is lifted rather than left dim. */
+.section-tab.is-current .section-letter { color: #d7a94b; }
+.section-name {
+  display: block;
+  font-family: var(--serif-display);
+  font-size: clamp(1.1rem, 2.4vw, 1.5rem);
+  font-weight: 600;
+  line-height: 1.15;
+  margin-top: 2px;
+  color: inherit;
+}
+.section-desc {
+  display: block;
+  font-size: .88rem;
+  font-style: italic;
+  margin-top: 3px;
+  color: inherit;
+  opacity: .72;
+}
+
+/* This section's own edition stamp, below the spine — the two departments are
+   tallied at different hours and must each say when. */
+.section-dateline {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding-top: 14px;
+}
+
+@media (max-width: 620px) {
+  .sections { grid-template-columns: 1fr; }
+  .section-tab + .section-tab { border-left: none; border-top: 1px solid var(--rule); }
+  .section-tab { padding: 13px 16px 15px; }
+}
+
 .dateline {
   display: flex;
   align-items: center;
@@ -243,6 +315,7 @@ main { max-width: var(--maxw); margin: 0 auto; }
 .controls {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 16px;
   padding: 26px 0 6px;
 }
@@ -443,6 +516,14 @@ main { max-width: var(--maxw); margin: 0 auto; }
   text-align: left;
 }
 #data-table td:not(:first-child) { text-align: right; }
+/* Company names are prose, not figures — left-aligned and allowed to wrap. */
+#data-table td.td-wide {
+  text-align: left;
+  font-family: var(--serif-text);
+  font-size: .95rem;
+  max-width: 260px;
+  white-space: normal;
+}
 #data-table tbody tr:nth-child(even) { background: rgba(210,196,168,.13); }
 #data-table tbody tr:hover { background: rgba(166,122,38,.12); }
 .td-advance { color: var(--up); }

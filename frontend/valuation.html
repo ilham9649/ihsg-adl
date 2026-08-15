@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Jakarta Ledger — Intrinsic Value</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,400..700&family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,320..480&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="valuation.css">
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+
+  <!-- ─────────────  MASTHEAD  ───────────── -->
+  <header class="masthead">
+    <div class="masthead-rule top"></div>
+    <div class="edition">
+      <span>Jakarta Composite Index</span>
+      <span class="edition-mark">❖</span>
+      <span><span id="valued-count">—</span> Companies Valued</span>
+    </div>
+
+    <h1 class="masthead-title">The Jakarta Ledger</h1>
+
+    <div class="masthead-sub">
+      <span class="flourish">—— ✦ ——</span>
+      <p>A daily reading of the Jakarta market</p>
+      <span class="flourish">—— ✦ ——</span>
+    </div>
+    <div class="masthead-rule bottom"></div>
+  </header>
+
+  <!-- ─────────────  SECTIONS  ───────────── -->
+  <nav class="sections" aria-label="Sections of this edition">
+    <a class="section-tab" href="index.html">
+      <span class="section-letter">A</span>
+      <span class="section-name">Breadth &amp; Momentum</span>
+      <span class="section-desc">How many rose, and how the index moved</span>
+    </a>
+    <a class="section-tab is-current" href="valuation.html" aria-current="page">
+      <span class="section-letter">B</span>
+      <span class="section-name">Valuation</span>
+      <span class="section-desc">What the listing is worth</span>
+    </a>
+  </nav>
+
+  <!-- No re-value button: the run takes ~500s and would always 504 through API
+       Gateway's 29s cap. The nightly job owns this section's edition. -->
+  <div class="dateline section-dateline">
+    <span id="last-updated" class="dateline-date">Loading edition…</span>
+  </div>
+
+  <main>
+    <!-- ─────────────  THE SPREAD  ─────────────
+         The signature figure: one hairline per company, placed by how many
+         doublings separate its price from its estimated worth. -->
+    <section class="spread reveal" style="--d:1">
+      <div class="figure-head">
+        <span class="figure-no">Fig. I</span>
+        <h2>The Spread of Worth</h2>
+        <span class="figure-cap">One mark per company · price against estimate</span>
+      </div>
+
+      <p class="figure-note spread-intro">
+        Each hairline below is one company, placed by the distance between what it costs and what
+        its accounts say it is worth. Marks pile up where companies cluster. The scale doubles at
+        every step, because the gap runs from a few percent to several times over.
+      </p>
+
+      <figure class="spread-figure">
+        <figcaption class="spread-readout" id="spread-readout" aria-live="polite">
+          <span class="readout-label">Median company</span>
+          <span class="readout-body">Reading the record…</span>
+        </figcaption>
+
+        <div class="spread-frame">
+          <svg id="spread-strip" viewBox="0 0 1000 150" preserveAspectRatio="none"
+               role="img" aria-labelledby="spread-alt"></svg>
+          <p id="spread-alt" class="visually-hidden"></p>
+          <div class="spread-axis" id="spread-axis" aria-hidden="true"></div>
+        </div>
+      </figure>
+
+      <p class="spread-finding" id="spread-finding"></p>
+    </section>
+
+    <!-- ─────────────  TERMS  ───────────── -->
+    <section class="terms reveal" style="--d:2">
+      <div class="figure-head">
+        <span class="figure-no">Note</span>
+        <h2>Terms of the Estimate</h2>
+        <span class="figure-cap">Two models · one ranking</span>
+      </div>
+
+      <dl class="terms-list">
+        <div class="term">
+          <dt>Discount rate</dt>
+          <dd><b>13%</b> on every company — the Indonesian ten-year yield plus an equity risk
+            premium. One rate for all, which treats a utility and a mining junior as equally risky.
+            They are not.</dd>
+        </div>
+        <div class="term">
+          <dt>Growth</dt>
+          <dd><b>Five years</b>, then <b>4%</b> forever. Operating companies grow at their own
+            revenue rate, capped at 15%; financials at what they retain from earnings.</dd>
+        </div>
+        <div class="term">
+          <dt>Cash flow</dt>
+          <dd>The <b>median</b> of the filed years, never the latest. One asset sale must not
+            become a perpetuity.</dd>
+        </div>
+        <div class="term">
+          <dt>Accounts</dt>
+          <dd>The <b>last four quarters</b> where a company files them cleanly, the last full
+            <b>financial year</b> otherwise. Yahoo's quarterly record has gaps — about
+            <b>six in ten</b> companies are missing one — and four quarters with a hole in the
+            middle is not a year. Every row prints the period it rests on.</dd>
+        </div>
+      </dl>
+
+      <div class="terms-models">
+        <p><span class="run-in">Operating companies</span> are valued on discounted cash flow. Five
+          years of free cash flow, a closing value for everything after, debt subtracted and cash
+          added to reach what the shareholders own.</p>
+        <p><span class="run-in">Banks and insurers</span> cannot be. A bank's reported free cash
+          flow is deposit and lending flow — it measures the balance sheet, not the business, and a
+          cash flow model reads it as enormous wealth. They are valued on <em>excess return</em>
+          instead: book value, plus whatever the bank earns <em>above</em> its cost of equity. A bank
+          returning exactly 13% on book is worth its book and no more.</p>
+        <p><span class="run-in">Companies are missing</span> from the ranking when they lose money,
+          file nothing, or carry no sector. Without the sector we cannot tell which model applies,
+          and a wrong model is worse than no number. These figures rank. They do not price.</p>
+      </div>
+    </section>
+
+    <!-- ─────────────  CONTROLS  ───────────── -->
+    <div class="controls reveal" style="--d:3">
+      <span class="controls-label">Model</span>
+      <div class="select-wrap">
+        <select id="model-select">
+          <option value="all" selected>All Companies</option>
+          <option value="dcf">Cash Flow Only</option>
+          <option value="residual-income">Financials Only</option>
+        </select>
+      </div>
+      <span class="controls-label">Find</span>
+      <input type="search" id="search-input" class="search-input" placeholder="Ticker or name…" aria-label="Filter by ticker or company name">
+    </div>
+
+    <!-- ─────────────  THE RANKING  ───────────── -->
+    <section class="ledger reveal" style="--d:4">
+      <div class="figure-head">
+        <span class="figure-no">Tab. A</span>
+        <h2>Cheapest to Dearest</h2>
+        <span class="figure-cap">Ranked by discount to estimated intrinsic value</span>
+      </div>
+      <p class="figure-note">
+        The widest discounts first, the richest valuations last. Filtering the table also picks the
+        matching companies out of the figure above. Hover a column heading for what it measures.
+      </p>
+      <div class="table-scroll">
+        <table id="data-table">
+          <thead><tr></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="figure-note" id="row-count"></p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="masthead-rule"></div>
+    <p class="colophon">
+      <span class="colophon-mark">❖</span>
+      Accounts from Yahoo Finance · Estimates, not advice · Neither a recommendation to buy nor to
+      sell · <span class="colophon-site">finance.sulaksono.id</span>
+    </p>
+  </footer>
+
+  <script src="valuation.js"></script>
+</body>
+</html>

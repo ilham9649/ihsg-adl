@@ -5,7 +5,7 @@
 // Partition Key: date (S) - required for idempotent writes
 // ──────────────────────────────────────────────
 
-import { DynamoDBClient, ScanCommand, PutItemCommand, BatchWriteItemCommand, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
+import { DynamoDBClient, ScanCommand, GetItemCommand, PutItemCommand, BatchWriteItemCommand, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
 
 const client = new DynamoDBClient({});
 
@@ -20,8 +20,9 @@ export async function getAllData() {
       TableName: TABLE_NAME,
       ProjectionExpression: '#d, advances, declines, unchanged, spread, #r, adLine, mcClellan, pctAdvancing, ihsg, ihsgOpen, ihsgHigh, ihsgLow',
       ExpressionAttributeNames: { '#d': 'date', '#r': 'ratio' },
-      FilterExpression: '#d <> :lock',
-      ExpressionAttributeValues: { ':lock': { S: LOCK_KEY } },
+      // Only daily breadth rows. Skips the refresh lock and the valuation row,
+      // neither of which carries the daily fields this parser reads.
+      FilterExpression: 'attribute_exists(advances)',
       ExclusiveStartKey: lastEvaluatedKey,
     }));
 
@@ -111,6 +112,40 @@ export async function deleteDates(dates) {
       RequestItems: { [TABLE_NAME]: deleteRequests },
     }));
   }
+}
+
+// ── Valuation ──
+// The whole ranking lives in ONE item as a JSON string. It is read and written
+// whole, never queried by ticker, so a row per ticker would only add scan cost.
+// ponytail: ~500 tickers ≈ 120KB against DynamoDB's 400KB item limit. Split by
+// sector, or move to S3, if the universe grows past roughly 1,500 names.
+const VALUATION_KEY = '_valuation';
+
+export async function putValuation(rows, attempted) {
+  await client.send(new PutItemCommand({
+    TableName: TABLE_NAME,
+    Item: {
+      date: { S: VALUATION_KEY },
+      updatedAt: { S: new Date().toISOString() },
+      // How many tickers were tried, so the page can report what fell out
+      // rather than silently showing only the names that valued.
+      attempted: { N: String(attempted) },
+      rows: { S: JSON.stringify(rows) },
+    },
+  }));
+}
+
+export async function getValuation() {
+  const result = await client.send(new GetItemCommand({
+    TableName: TABLE_NAME,
+    Key: { date: { S: VALUATION_KEY } },
+  }));
+  if (!result.Item?.rows?.S) return { updatedAt: null, attempted: 0, rows: [] };
+  return {
+    updatedAt: result.Item.updatedAt?.S || null,
+    attempted: result.Item.attempted?.N ? parseInt(result.Item.attempted.N, 10) : 0,
+    rows: JSON.parse(result.Item.rows.S),
+  };
 }
 
 // ── Refresh Lock ──
