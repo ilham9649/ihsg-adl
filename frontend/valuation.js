@@ -213,9 +213,12 @@ function describe(row) {
 }
 
 let medianRow = null;
+// The resting state shows the middle of the board so the panel is not blank.
+// The label carries the rank because without it the large display type reads as
+// a recommendation rather than a position in the list.
 function restoreReadout() {
   if (!medianRow) return;
-  showReadout('Median company', ...describe(medianRow));
+  showReadout(`Median · rank ${allRows.indexOf(medianRow) + 1} of ${allRows.length}`, ...describe(medianRow));
 }
 
 function bindHover() {
