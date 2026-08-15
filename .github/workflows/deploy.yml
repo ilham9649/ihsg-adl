@@ -25,13 +25,18 @@ jobs:
 
       - name: Sync frontend to S3
         run: |
+          # no-cache means "store it, but revalidate before reuse". Nothing here
+          # is content-hashed, so a filename always points at the newest file and
+          # a browser must never serve its copy without asking. Dropping this
+          # header lets browsers cache heuristically off Last-Modified and hold
+          # stale JS for hours after a deploy.
           aws s3 sync frontend/ s3://finance.sulaksono.id/ \
             --delete \
+            --cache-control "no-cache" \
             --exclude "*.html"
-          # Every page is served no-cache, so a redeploy is never stale.
           for page in index valuation; do
             aws s3 cp "frontend/$page.html" "s3://finance.sulaksono.id/$page.html" \
-              --cache-control "no-cache,max-age=0"
+              --cache-control "no-cache"
           done
 
       - name: Invalidate CloudFront
