@@ -1,12 +1,9 @@
 /* ══════════════════════════════════════════════════════════════════
    SECTION B — THE VALUATION COLUMN
    Loaded only by valuation.html. The shared system lives in styles.css;
-   these are the rules no other section needs.
+   these are the rules no other section needs. The spread figure is the
+   one bold object on the page; everything around it stays quiet.
    ══════════════════════════════════════════════════════════════════ */
-/* ═══════════════  THE VALUATION COLUMN  ═══════════════
-   Page-specific. The spread figure is the one bold object on the page;
-   everything around it stays quiet.
-   ═══════════════════════════════════════════════════════ */
 
 .visually-hidden {
   position: absolute;
@@ -33,14 +30,15 @@
   padding-bottom: 12px;
   border-bottom: 1px solid var(--rule-soft);
 }
-.readout-label {
+.readout-label,
+.terms-list dt {
   font-family: var(--mono);
   font-size: .62rem;
   letter-spacing: .18em;
   text-transform: uppercase;
   color: var(--ink-faint);
-  white-space: nowrap;
 }
+.readout-label { white-space: nowrap; }
 .readout-body {
   font-family: var(--serif-display);
   font-size: clamp(1.05rem, 2.4vw, 1.5rem);
@@ -49,8 +47,10 @@
   color: var(--ink);
 }
 .readout-body b { font-weight: 700; }
-.readout-body .cheap { color: var(--up); }
-.readout-body .dear  { color: var(--down); }
+.readout-body .cheap,
+.spread-finding .cheap { color: var(--up); }
+.readout-body .dear,
+.spread-finding .dear  { color: var(--down); }
 
 .spread-frame { position: relative; margin-top: 14px; }
 
@@ -126,8 +126,6 @@
   max-width: 46ch;
 }
 .spread-finding b { font-weight: 700; font-variant-numeric: tabular-nums; }
-.spread-finding .cheap { color: var(--up); }
-.spread-finding .dear  { color: var(--down); }
 
 /* ── Terms ── */
 .terms { padding: 34px 0 10px; }
@@ -144,14 +142,7 @@
 }
 .term:nth-child(odd) { border-right: 1px solid var(--rule-soft); padding-right: 28px; }
 .term:nth-child(even) { padding-left: 28px; }
-.terms-list dt {
-  font-family: var(--mono);
-  font-size: .62rem;
-  letter-spacing: .18em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  margin-bottom: 6px;
-}
+.terms-list dt { margin-bottom: 6px; }
 .terms-list dd { font-size: .96rem; line-height: 1.5; color: var(--ink-soft); }
 .terms-list dd b { color: var(--ink); font-weight: 600; }
 
