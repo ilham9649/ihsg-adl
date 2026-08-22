@@ -148,6 +148,55 @@ export async function getValuation() {
   };
 }
 
+// ── Sentiment ──
+// One item PER DAY, like the daily breadth rows, but under a distinct key
+// prefix (`sent#YYYY-MM-DD`) so it can never collide with — or be clobbered
+// by — the breadth refresh's full-item PutItem overwrite of the plain `date`
+// key for that same calendar day.
+const SENTIMENT_PREFIX = 'sent#';
+
+export async function putSentiment({ date, score, label, summary, headlineCount }) {
+  await client.send(new PutItemCommand({
+    TableName: TABLE_NAME,
+    Item: {
+      date: { S: `${SENTIMENT_PREFIX}${date}` },
+      day: { S: date },
+      score: { N: String(score) },
+      label: { S: label || '' },
+      summary: { S: summary || '' },
+      headlineCount: { N: String(headlineCount) },
+      updatedAt: { S: new Date().toISOString() },
+    },
+  }));
+}
+
+export async function getAllSentiment() {
+  const items = [];
+  let lastEvaluatedKey;
+  do {
+    const result = await client.send(new ScanCommand({
+      TableName: TABLE_NAME,
+      FilterExpression: 'begins_with(#d, :p)',
+      ExpressionAttributeNames: { '#d': 'date' },
+      ExpressionAttributeValues: { ':p': { S: SENTIMENT_PREFIX } },
+      ExclusiveStartKey: lastEvaluatedKey,
+    }));
+    items.push(...(result.Items || []));
+    lastEvaluatedKey = result.LastEvaluatedKey;
+  } while (lastEvaluatedKey);
+
+  return items
+    .map(item => ({
+      date: item.day.S,
+      score: parseFloat(item.score.N),
+      label: item.label?.S || '',
+      summary: item.summary?.S || '',
+      headlineCount: item.headlineCount?.N ? parseInt(item.headlineCount.N, 10) : null,
+      updatedAt: item.updatedAt?.S || null,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
 // ── Refresh Lock ──
 const LOCK_KEY = '_refresh_lock';
 const LOCK_TTL_MS = 30 * 60 * 1000; // 30 minutes
