@@ -6,12 +6,12 @@
 // stories (earthquakes, banking how-tos), so the prompt itself does the
 // filtering: score what's relevant, ignore what isn't.
 //
-// Needs ANTHROPIC_API_KEY in the Lambda environment — not provisioned by this
+// Needs DEEPSEEK_API_KEY in the Lambda environment — not provisioned by this
 // repo. Until it's set, refreshSentiment() in index.js fails cleanly (no key,
 // no write) rather than storing a bad reading.
 
-const LLM_URL = 'https://api.anthropic.com/v1/messages';
-const LLM_MODEL = process.env.SENTIMENT_LLM_MODEL || 'claude-haiku-4-5-20251001';
+const LLM_URL = 'https://api.deepseek.com/chat/completions'; // OpenAI-compatible
+const LLM_MODEL = process.env.SENTIMENT_LLM_MODEL || 'deepseek-chat';
 
 // Bounds the prompt's token cost; a single day's feed rarely runs this high anyway.
 const MAX_HEADLINES = 40;
@@ -33,15 +33,14 @@ Respond with ONLY one JSON object, no markdown fences, no other text:
 }
 
 async function callLLM(prompt) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error('Sentiment scoring is not configured');
 
   const res = await fetch(LLM_URL, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
+      'authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: LLM_MODEL,
@@ -60,7 +59,7 @@ async function callLLM(prompt) {
   }
 
   const json = await res.json();
-  return json.content?.[0]?.text || '';
+  return json.choices?.[0]?.message?.content || '';
 }
 
 /** Pure parser (exported for tests) — tolerates prose/fences around the JSON. */
