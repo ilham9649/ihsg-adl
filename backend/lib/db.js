@@ -197,24 +197,23 @@ export async function getAllSentiment() {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-// ── Refresh Lock ──
-const LOCK_KEY = '_refresh_lock';
-const LOCK_TTL_MS = 30 * 60 * 1000; // 30 minutes
-
-export async function acquireRefreshLock() {
+// ── Generic short-lived lock (TTL-gated conditional PutItem) ──
+// Same primitive serves two different jobs: a mutex (block a second run while
+// one is in flight) and a cooldown (block rapid repeats even sequentially).
+async function acquireLock(key, ttlMs) {
   const now = Date.now();
   try {
     await client.send(new PutItemCommand({
       TableName: TABLE_NAME,
       Item: {
-        date: { S: LOCK_KEY },
+        date: { S: key },
         lockedAt: { N: String(now) },
-        ttl: { N: String(now + LOCK_TTL_MS) },
+        ttl: { N: String(now + ttlMs) },
       },
-      ConditionExpression: 'attribute_not_exists(#d) OR #t < :now',
+      ConditionExpression: 'attribute_not_exists(#d) OR #t < :cutoff',
       ExpressionAttributeNames: { '#d': 'date', '#t': 'lockedAt' },
       ExpressionAttributeValues: {
-        ':now': { N: String(now - LOCK_TTL_MS) },
+        ':cutoff': { N: String(now - ttlMs) },
       },
     }));
     return true;
@@ -226,11 +225,38 @@ export async function acquireRefreshLock() {
   }
 }
 
-export async function releaseRefreshLock() {
+async function releaseLock(key) {
   await client.send(new DeleteItemCommand({
     TableName: TABLE_NAME,
-    Key: { date: { S: LOCK_KEY } },
+    Key: { date: { S: key } },
   }));
+}
+
+// ── Refresh Lock — prevents two overlapping full-universe A/D scrapes ──
+const LOCK_KEY = '_refresh_lock';
+const LOCK_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+export async function acquireRefreshLock() {
+  return acquireLock(LOCK_KEY, LOCK_TTL_MS);
+}
+
+export async function releaseRefreshLock() {
+  return releaseLock(LOCK_KEY);
+}
+
+// ── Sentiment cooldown — each refresh is a billed LLM call behind a public,
+// unauthenticated POST route. This blocks rapid repeats (accidental or
+// deliberate) rather than leaving that route free to spam. 5 minutes is well
+// under the once-a-day cadence the reading actually needs.
+const SENTIMENT_LOCK_KEY = '_sentiment_lock';
+const SENTIMENT_COOLDOWN_MS = 5 * 60 * 1000;
+
+export async function acquireSentimentCooldown() {
+  return acquireLock(SENTIMENT_LOCK_KEY, SENTIMENT_COOLDOWN_MS);
+}
+
+export async function releaseSentimentCooldown() {
+  return releaseLock(SENTIMENT_LOCK_KEY);
 }
 
 export { TABLE_NAME };

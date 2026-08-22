@@ -34,7 +34,7 @@ Respond with ONLY one JSON object, no markdown fences, no other text:
 
 async function callLLM(prompt) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
+  if (!apiKey) throw new Error('Sentiment scoring is not configured');
 
   const res = await fetch(LLM_URL, {
     method: 'POST',
@@ -50,7 +50,14 @@ async function callLLM(prompt) {
     }),
     signal: AbortSignal.timeout(30000),
   });
-  if (!res.ok) throw new Error(`LLM HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) {
+    // The upstream body (and the exact env var name above) stay in CloudWatch
+    // only — index.js's catch-all returns err.message straight to the caller,
+    // and /api/sentiment/refresh has no auth, so neither should describe the
+    // failure in enough detail to be useful to a stranger probing the endpoint.
+    console.error(`LLM HTTP ${res.status}:`, (await res.text()).slice(0, 500));
+    throw new Error('Sentiment scoring request failed');
+  }
 
   const json = await res.json();
   return json.content?.[0]?.text || '';

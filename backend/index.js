@@ -7,7 +7,7 @@ import { fetchChart, fetchQuotes, computeSeries, isStaleComparison } from './scr
 import { buildValuations } from './scrapers/valuation.js';
 import { fetchHeadlines, filterToday, wibDateString } from './scrapers/news.js';
 import { scoreSentiment } from './scrapers/sentiment.js';
-import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, acquireRefreshLock, releaseRefreshLock } from './lib/db.js';
+import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, acquireRefreshLock, releaseRefreshLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
 
 const HEADERS = {
   'Content-Type': 'application/json',
@@ -171,11 +171,17 @@ async function refreshValuations() {
   };
 }
 
-// Market-wide only (not per-ticker), and its own trigger like valuation — one
-// RSS fetch + one LLM call, seconds not minutes, so no refresh lock needed.
+// Market-wide only (not per-ticker), and its own trigger like valuation. Unlike
+// the free Yahoo-only jobs, each run is a billed LLM call behind a public POST
+// route with no auth — acquireSentimentCooldown guards against that being spammed.
 const MIN_TODAY_HEADLINES = 3;
 
 async function refreshSentiment() {
+  const cooled = await acquireSentimentCooldown();
+  if (!cooled) {
+    return { success: false, message: 'Sentiment was refreshed too recently — try again in a few minutes', locked: true };
+  }
+
   const all = await fetchHeadlines();
   let headlines = filterToday(all);
   if (headlines.length < MIN_TODAY_HEADLINES) {
@@ -184,6 +190,7 @@ async function refreshSentiment() {
     headlines = all.slice().sort((a, b) => (b.pubDate || 0) - (a.pubDate || 0)).slice(0, 20);
   }
   if (headlines.length === 0) {
+    await releaseSentimentCooldown(); // no LLM call made, no cost incurred — safe to retry sooner
     return { success: false, message: 'No headlines fetched' };
   }
 

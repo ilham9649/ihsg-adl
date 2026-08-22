@@ -9,16 +9,27 @@
 
 const RSS_URL = 'https://www.cnbcindonesia.com/market/rss';
 
-const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", '#039': "'" };
+// Named entities plus generic numeric refs (&#8217; / &#x2019;) — a regex parser
+// that only handles a fixed named-entity table diverges from what a real XML
+// parser decodes, which is exactly the kind of gap a crafted feed item can use
+// to smuggle content past it undecoded.
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
 function decodeEntities(s) {
-  return s.replace(/&(#?\w+);/g, (m, e) => ENTITIES[e] ?? m);
+  return s.replace(/&(#x?[0-9a-fA-F]+|\w+);/g, (m, e) => {
+    if (e[0] !== '#') return ENTITIES[e] ?? m;
+    const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+    return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+  });
 }
 
 function extractTag(block, tag) {
   const m = block.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`));
   if (!m) return '';
   const raw = m[1].match(/^<!\[CDATA\[([\s\S]*)\]\]>$/);
-  return decodeEntities((raw ? raw[1] : m[1]).trim());
+  // Collapse embedded newlines/control chars: titles feed straight into a
+  // numbered list in the sentiment LLM prompt, and a raw newline there would
+  // let one crafted headline masquerade as extra list entries.
+  return decodeEntities((raw ? raw[1] : m[1])).replace(/\s+/g, ' ').trim();
 }
 
 function parseDate(raw) {
