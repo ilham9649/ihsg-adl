@@ -155,10 +155,17 @@ function linkBreadth(bc) {
   bc.onLeave = () => HoverSync.clear(sub);
 }
 
+// Debounce rapid input — the date filter re-renders the ~4,000-row ledger, so
+// only commit once typing pauses rather than on every keystroke.
+function debounce(fn, ms = 200) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
 // ── Init ──
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('range-select').addEventListener('change', () => renderAll());
-  document.getElementById('date-filter').addEventListener('input', () => renderTable(getFilteredData()));
+  document.getElementById('date-filter').addEventListener('input', debounce(() => renderTable(getFilteredData())));
   document.querySelectorAll('#ma-checklist input[type=checkbox]')
     .forEach(cb => cb.addEventListener('change', applyMaToggles));
   fetchData();
@@ -233,8 +240,11 @@ function showEmpty(msg) {
 function getFilteredData() {
   const raw = document.getElementById('range-select').value;
   if (raw === 'ytd') {
-    const jan1 = new Date().getFullYear() + '-01-01';
-    return allData.filter(d => d.date >= jan1);
+    // The record is WIB-dated; anchor YTD to the newest session in the data,
+    // not the browser's local year (which drifts around the New Year boundary
+    // for non-WIB visitors).
+    const latestYear = allData.length ? allData[allData.length - 1].date.slice(0, 4) : new Date().getFullYear();
+    return allData.filter(d => d.date >= latestYear + '-01-01');
   }
   const range = parseInt(raw, 10);
   if (!range) return allData; // 0 / NaN → Full Record
