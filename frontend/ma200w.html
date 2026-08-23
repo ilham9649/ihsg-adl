@@ -99,16 +99,18 @@
         <h2>Share of the Market Near Its Line</h2>
         <span class="figure-cap">% of stocks within ±5% of their own 200-week average · one point per refresh</span>
       </div>
-      <p class="figure-note">
-        Each point is one day's reading across the whole usable universe. A stock needs about <b>3.8 years</b>
-        of trading history to have a 200-week average at all, so recently listed names are excluded rather than
-        estimated — the same honest omission the Valuation page makes for companies its models can't value.
-        There is no backfilled history before this page's first deploy: the line lengthens by one point every
-        time the daily breadth job runs.
-      </p>
-      <div class="breadth-frame">
-        <canvas id="ma200w-chart"></canvas>
-        <div class="bc-tip" id="ma200w-tip"></div>
+      <div class="figure-body">
+        <p class="figure-note">
+          Each point is one day's reading across the whole usable universe. A stock needs about <b>3.8 years</b>
+          of trading history to have a 200-week average at all, so recently listed names are excluded rather than
+          estimated — the same honest omission the Valuation page makes for companies its models can't value.
+          There is no backfilled history before this page's first deploy: the line lengthens by one point every
+          time the daily breadth job runs.
+        </p>
+        <div class="breadth-frame">
+          <canvas id="ma200w-chart"></canvas>
+          <div class="bc-tip" id="ma200w-tip"></div>
+        </div>
       </div>
     </section>
 
@@ -119,21 +121,23 @@
         <h2>Terms of the Reading</h2>
         <span class="figure-cap">One line per stock · same weekly convention as the Stochastic and Shinohara panels</span>
       </div>
-      <p class="figure-note">
-        <b>The line.</b> A simple average of the last 200 weekly closes, on the dividend/split-adjusted price so
-        an ex-dividend day never reads as a fake drop toward the line. Weeks are bucketed the same way as the
-        front page's weekly panels — a week's close is whatever the latest available price is, including a week
-        still in progress, not only a week that has fully finished.
-      </p>
-      <p class="figure-note">
-        <b>Near.</b> Within 5% either side of the line, in either direction. Close from above and close from
-        below both count — the reading is about proximity to the level, not which side a stock sits on.
-      </p>
-      <p class="figure-note">
-        <b>Not a signal.</b> Sitting near a 200-week average has no fixed meaning by itself — it can be a level
-        that holds, or one that gets cut straight through. This page counts proximity; it does not predict
-        which way it breaks.
-      </p>
+      <div class="notes-grid">
+        <p class="figure-note">
+          <b>The line.</b> A simple average of the last 200 weekly closes, on the dividend/split-adjusted price so
+          an ex-dividend day never reads as a fake drop toward the line. Weeks are bucketed the same way as the
+          front page's weekly panels — a week's close is whatever the latest available price is, including a week
+          still in progress, not only a week that has fully finished.
+        </p>
+        <p class="figure-note">
+          <b>Near.</b> Within 5% either side of the line, in either direction. Close from above and close from
+          below both count — the reading is about proximity to the level, not which side a stock sits on.
+        </p>
+        <p class="figure-note">
+          <b>Not a signal.</b> Sitting near a 200-week average has no fixed meaning by itself — it can be a level
+          that holds, or one that gets cut straight through. This page counts proximity; it does not predict
+          which way it breaks.
+        </p>
+      </div>
     </section>
 
     <!-- ─────────────  CONTROLS  ───────────── -->
