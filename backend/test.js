@@ -11,6 +11,7 @@ import { FALLBACK_TICKERS, IDX_TICKERS, DELISTED_TICKERS, getAllTickers } from '
 import { dcfPerShare, residualIncomePerShare, isFinancial, median, trailingTwelveMonths, mostRecent, DISCOUNT_RATE, TERMINAL_GROWTH } from './scrapers/valuation.js';
 import { parseRssItems, mergeHeadlines, wibDateString, filterToday } from './scrapers/news.js';
 import { parseScoreResponse } from './scrapers/sentiment.js';
+import { weeklyCloses, ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
 
 // Helper: assert the A/D Line cumulative invariant (adLine is a genuine running
 // sum of spreads, never resets).
@@ -582,5 +583,83 @@ describe('parseScoreResponse — tolerant LLM reply parsing', () => {
   test('pure garbage text yields null', () => {
     strictEqual(parseScoreResponse('I cannot complete this request.'), null);
     strictEqual(parseScoreResponse(''), null);
+  });
+});
+
+// Bars 7 days apart land in a distinct ISO week every time (a week is always
+// exactly 7 days, so this holds across year boundaries too) — a convenient way
+// to build an exact N-week fixture without depending on a real trading calendar.
+function weeklyBars(count, closeFn, startDate = '2022-01-03') {
+  const start = new Date(startDate + 'T00:00:00Z');
+  return Array.from({ length: count }, (_, i) => {
+    const d = new Date(start);
+    d.setUTCDate(d.getUTCDate() + i * 7);
+    return { date: d.toISOString().slice(0, 10), adjClose: closeFn(i) };
+  });
+}
+
+describe('weeklyCloses — ISO-week bucketing (same convention as frontend/app.js)', () => {
+  test('one bar per week yields one close per week, in order', () => {
+    const bars = weeklyBars(5, i => 100 + i);
+    const weeks = weeklyCloses(bars);
+    strictEqual(weeks.length, 5);
+    strictEqual(weeks[4].close, 104);
+  });
+
+  test('multiple bars in the same ISO week collapse to the LAST close', () => {
+    const bars = [
+      { date: '2026-08-17', adjClose: 100 }, // Monday
+      { date: '2026-08-18', adjClose: 105 },
+      { date: '2026-08-19', adjClose: 98 },  // last bar of that week wins
+      { date: '2026-08-24', adjClose: 110 }, // next Monday, new week
+    ];
+    const weeks = weeklyCloses(bars);
+    strictEqual(weeks.length, 2);
+    strictEqual(weeks[0].close, 98);
+    strictEqual(weeks[1].close, 110);
+  });
+});
+
+describe('ma200wSnapshot — distance from the 200-week average', () => {
+  test('fewer than 200 weekly bars yields null (too young to have a line)', () => {
+    strictEqual(ma200wSnapshot(weeklyBars(199, () => 100)), null);
+  });
+
+  test('a flat 200-week series sits exactly on its own average', () => {
+    const snap = ma200wSnapshot(weeklyBars(200, () => 100));
+    strictEqual(snap.price, 100);
+    strictEqual(snap.ma200w, 100);
+    strictEqual(snap.pctFromMa, 0);
+  });
+
+  test('the latest close pulls the reading above the trailing average', () => {
+    // 199 weeks at 100, then one week at 130: ma = (199*100+130)/200 = 100.15.
+    const bars = weeklyBars(200, i => (i === 199 ? 130 : 100));
+    const snap = ma200wSnapshot(bars);
+    strictEqual(snap.price, 130);
+    strictEqual(snap.ma200w, 100.15);
+    strictEqual(snap.pctFromMa, 29.8); // (130-100.15)/100.15 * 100, rounded to 1dp
+  });
+
+  test('no bars at all yields null rather than throwing', () => {
+    strictEqual(ma200wSnapshot([]), null);
+    strictEqual(ma200wSnapshot(null), null);
+  });
+});
+
+describe('summarizeMa200w — market-wide reading from per-ticker snapshots', () => {
+  test('counts within the band and below the line', () => {
+    const rows = [{ pctFromMa: 2 }, { pctFromMa: -3 }, { pctFromMa: 8 }, { pctFromMa: -1 }];
+    const s = summarizeMa200w(rows, 5);
+    strictEqual(s.universeCount, 4);
+    strictEqual(s.pctNear, 75); // 2, -3, -1 are within +/-5; 8 is not
+    strictEqual(s.pctBelow, 50); // -3 and -1 sit below their own line
+  });
+
+  test('an empty universe reads as zero, not NaN or a throw', () => {
+    const s = summarizeMa200w([]);
+    strictEqual(s.universeCount, 0);
+    strictEqual(s.pctNear, 0);
+    strictEqual(s.pctBelow, 0);
   });
 });

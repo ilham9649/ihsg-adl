@@ -119,7 +119,7 @@ footer .masthead-rule { max-width: var(--maxw); margin: 0 auto 18px; }
   max-width: var(--maxw);
   margin: 0 auto;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   border-bottom: 2px solid var(--ink);
 }
 .section-tab {
