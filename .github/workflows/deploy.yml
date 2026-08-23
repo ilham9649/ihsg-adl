@@ -34,7 +34,7 @@ jobs:
             --delete \
             --cache-control "no-cache" \
             --exclude "*.html"
-          for page in index valuation; do
+          for page in index valuation sentiment; do
             aws s3 cp "frontend/$page.html" "s3://finance.sulaksono.id/$page.html" \
               --cache-control "no-cache"
           done

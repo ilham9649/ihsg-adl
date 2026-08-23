@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Serverless IHSG (Jakarta Composite Index) market dashboard — **"The Jakarta Ledger"** (editorial broadsheet UI). Two pages: `index.html` (breadth & momentum) and `valuation.html` (intrinsic value, cheapest to dearest — see *Valuation page* below). Tracks the **full IDX listing (~957 stocks, all boards)** daily. The backend computes per-day breadth metrics (**% Advancing**, spread, A/D ratio, McClellan, `adLine`) and stores the IHSG index OHLC; the frontend adds index-price and momentum views. Panels: IHSG candles, the % Advancing breadth line (20/100/200-day MA ribbon), the Zweig Breadth Thrust, weekly Stochastic, and the Shinohara Intensity Ratio. (The A/D Ratio and McClellan *chart panels* were removed from the UI; those values are still computed and shown in the top indicator strip.)
+Serverless IHSG (Jakarta Composite Index) market dashboard — **"The Jakarta Ledger"** (editorial broadsheet UI). Three pages: `index.html` (breadth & momentum), `valuation.html` (intrinsic value, cheapest to dearest — see *Valuation page* below), and `sentiment.html` (LLM-scored daily market sentiment — see *Sentiment page* below). Tracks the **full IDX listing (~957 stocks, all boards)** daily. The backend computes per-day breadth metrics (**% Advancing**, spread, A/D ratio, McClellan, `adLine`) and stores the IHSG index OHLC; the frontend adds index-price and momentum views. Panels: IHSG candles, the % Advancing breadth line (20/100/200-day MA ribbon), the Zweig Breadth Thrust, weekly Stochastic, and the Shinohara Intensity Ratio. (The A/D Ratio and McClellan *chart panels* were removed from the UI; those values are still computed and shown in the top indicator strip.)
 
 > **Headline breadth = % Advancing, NOT the cumulative A/D Line.** A raw cumulative A/D Line (running sum of advances−declines) is not a mean-reverting oscillator: over 2023–2026 it drifts down ~1.5k on the liquid set and ~16k on the broad ~500 universe, because Indonesia's equal-weight breadth was persistently negative while the cap-weighted IHSG was held up by a few mega-caps. This is **genuine breadth, not a computation bug** — verified: switching raw→adjusted close removes only ~5–11% of the drift, and a volume/forward-fill filter removes ~0%. So the dashboard leads with `pctAdvancing` = advances/(advances+declines)×100, which oscillates around 50%. `adLine` is still computed and stored as a raw datum (and its cumulative invariant is unit-tested) but is not charted. See `computeSeries` in `backend/scrapers/yahoo.js`.
 
@@ -112,6 +112,19 @@ Both return a per-share number, so the two sets rank in one list.
 
 **Scheduling:** valuations move only when a company files, so this runs on its **own** trigger — `POST /api/valuation/refresh`, or an EventBridge event with `job: "valuation"`. It must **not** share the daily breadth cron: each ticker costs three Yahoo calls (~967 × 3), so the two jobs together would exceed the 900s Lambda timeout. ⚠️ The second EventBridge rule lives in the infrastructure repo and is **not yet created** — until it is, run the refresh manually.
 
+### Sentiment page (`frontend/sentiment.html`)
+A **third page** — market-wide (not per-stock) daily sentiment, scored by an LLM from Indonesian financial news headlines. Score scale is **−100 (extremely bearish) to +100 (extremely bullish), 0 = neutral**.
+
+**Pipeline** (`backend/scrapers/news.js` + `backend/scrapers/sentiment.js`): fetch CNBC Indonesia's market RSS feed (`https://www.cnbcindonesia.com/market/rss` — unlike `idx.co.id`, this feed does not block server-side fetches), filter to today's WIB-calendar-day headlines (falling back to the most recent ~20 headlines on a thin news day), and send them to DeepSeek's OpenAI-compatible chat-completions API via raw `fetch` (no SDK, matching this repo's zero-dependency scraper convention) with model `deepseek-chat` (overridable, see below). The feed mixes genuine market news with unrelated stories (disasters, banking how-tos); the prompt itself does the filtering, not the scraper. A response that fails to parse is discarded rather than stored — a phantom reading in the time series is worse than a skipped day.
+
+> **Requires `LLM_API_KEY`** in the Lambda environment — not provisioned by this repo (see *Environment Variables* below). Until it's set, `refreshSentiment()` fails cleanly (no key, no write).
+
+**Storage:** one DynamoDB item **per day**, like the daily breadth rows, but under key `sent#YYYY-MM-DD` — a distinct prefix from the plain `date` key so it can never collide with, or be clobbered by, the breadth refresh's full-item overwrite for that same calendar day. `getAllSentiment()` scans on `begins_with(date, "sent#")`.
+
+**Scheduling:** sentiment moves once a day off one RSS fetch and one LLM call (seconds, not minutes), so like valuation it runs on its **own** trigger — `POST /api/sentiment/refresh`, or an EventBridge event with `job: "sentiment"`. ⚠️ Same caveat as valuation: the EventBridge rule lives in the infrastructure repo and is **not yet created** — until it is, run the refresh manually. Unlike valuation's ~500s job, this one is fast enough that the **Re-read** button on the page goes straight through API Gateway without hitting its 29s cap.
+
+**Known limits — stated on the page itself:** it's one LLM's read of one day's headlines from one news feed, not a rigorous signal — the same headlines re-read, or read by a different model, would not always file the same number. The RSS feed only exposes a rolling window, not a deep archive, so there is no historical backfill: the trend line starts thin and lengthens by one point a day going forward.
+
 ### Deployment
 Push to `main` triggers GitHub Actions:
 1. Frontend: `aws s3 sync` to S3, CloudFront invalidation
@@ -120,6 +133,8 @@ Push to `main` triggers GitHub Actions:
 ## Environment Variables
 
 - `TABLE_NAME` — DynamoDB table name (default: `ihsg-adl`)
+- `LLM_API_KEY` — required for the sentiment scraper (`backend/scrapers/sentiment.js`) to call DeepSeek's chat-completions API. Not provisioned anywhere in this repo — a manual step outside it. Without it, `refreshSentiment()` fails cleanly rather than writing a bad reading.
+- `SENTIMENT_LLM_MODEL` — optional, overrides the sentiment-scoring model (default: `deepseek-chat`)
 
 ## Testing Locally
 

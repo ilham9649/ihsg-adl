@@ -5,7 +5,9 @@
 import { getAllTickers } from './lib/tickers.js';
 import { fetchChart, fetchQuotes, computeSeries, isStaleComparison } from './scrapers/yahoo.js';
 import { buildValuations } from './scrapers/valuation.js';
-import { getAllData, batchPutData, deleteDates, putValuation, getValuation, acquireRefreshLock, releaseRefreshLock } from './lib/db.js';
+import { fetchHeadlines, filterToday, wibDateString } from './scrapers/news.js';
+import { scoreSentiment } from './scrapers/sentiment.js';
+import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, acquireRefreshLock, releaseRefreshLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
 
 const HEADERS = {
   'Content-Type': 'application/json',
@@ -169,12 +171,59 @@ async function refreshValuations() {
   };
 }
 
+// Market-wide only (not per-ticker), and its own trigger like valuation. Unlike
+// the free Yahoo-only jobs, each run is a billed LLM call behind a public POST
+// route with no auth — acquireSentimentCooldown guards against that being spammed.
+const MIN_TODAY_HEADLINES = 3;
+
+async function refreshSentiment() {
+  const cooled = await acquireSentimentCooldown();
+  if (!cooled) {
+    return { success: false, message: 'Sentiment was refreshed too recently — try again in a few minutes', locked: true };
+  }
+
+  const all = await fetchHeadlines();
+  let headlines = filterToday(all);
+  if (headlines.length < MIN_TODAY_HEADLINES) {
+    // Thin news day (or the cron ran before much had published) — fall back to
+    // the most recent headlines regardless of date rather than skip the day.
+    headlines = all.slice().sort((a, b) => (b.pubDate || 0) - (a.pubDate || 0)).slice(0, 20);
+  }
+  if (headlines.length === 0) {
+    await releaseSentimentCooldown(); // no LLM call made, no cost incurred — safe to retry sooner
+    return { success: false, message: 'No headlines fetched' };
+  }
+
+  const result = await scoreSentiment(headlines);
+  if (!result) {
+    return { success: false, message: 'LLM response unparseable', headlineCount: headlines.length };
+  }
+
+  const date = wibDateString();
+  await putSentiment({ date, ...result, headlineCount: headlines.length });
+  console.log(`Sentiment complete: ${date} score=${result.score} (${headlines.length} headlines)`);
+
+  return {
+    success: true,
+    message: 'Refreshed sentiment',
+    date,
+    score: result.score,
+    label: result.label,
+    headlineCount: headlines.length,
+  };
+}
+
 export const handler = async (event) => {
   try {
     if (event.source === 'aws.events') {
       if (event.job === 'valuation') {
         console.log('Scheduled valuation triggered');
         const result = await refreshValuations();
+        return { statusCode: 200, body: JSON.stringify(result) };
+      }
+      if (event.job === 'sentiment') {
+        console.log('Scheduled sentiment triggered');
+        const result = await refreshSentiment();
         return { statusCode: 200, body: JSON.stringify(result) };
       }
       console.log('Scheduled refresh triggered');
@@ -206,6 +255,16 @@ export const handler = async (event) => {
 
     if (method === 'POST' && (path === '/api/valuation/refresh' || path === '/api/valuation/refresh/')) {
       const result = await refreshValuations();
+      return response(200, result);
+    }
+
+    if (method === 'GET' && (path === '/api/sentiment' || path === '/api/sentiment/')) {
+      const data = await getAllSentiment();
+      return response(200, { success: true, count: data.length, data });
+    }
+
+    if (method === 'POST' && (path === '/api/sentiment/refresh' || path === '/api/sentiment/refresh/')) {
+      const result = await refreshSentiment();
       return response(200, result);
     }
 

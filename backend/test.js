@@ -9,6 +9,8 @@ import { test, describe } from 'node:test';
 import { buildDailyCounts, computeSeries, isStaleComparison } from './scrapers/yahoo.js';
 import { FALLBACK_TICKERS, IDX_TICKERS, DELISTED_TICKERS, getAllTickers } from './lib/tickers.js';
 import { dcfPerShare, residualIncomePerShare, isFinancial, median, trailingTwelveMonths, mostRecent, DISCOUNT_RATE, TERMINAL_GROWTH } from './scrapers/valuation.js';
+import { parseRssItems, wibDateString, filterToday } from './scrapers/news.js';
+import { parseScoreResponse } from './scrapers/sentiment.js';
 
 // Helper: assert the A/D Line cumulative invariant (adLine is a genuine running
 // sum of spreads, never resets).
@@ -442,5 +444,117 @@ describe('valuation on trailing accounts', () => {
     strictEqual(v.basis, 'trailing');
     ok(Math.abs(v.roe - 0.2) < 1e-9, `ROE must come from the trailing year, got ${v.roe}`);
     ok(v.fairValue > 100, 'a 20% ROE against 13% required prices above book');
+  });
+});
+
+// ── Sentiment (news.js + sentiment.js) ──
+
+// A real feed item looks like:
+// <item><pubDate>Sat, 22 Aug 2026 10:00:05 +0700</pubDate><title><![CDATA[...]]></title><link>...</link></item>
+const RSS_FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<title>CNBC Indonesia Market</title>
+<item>
+<pubDate>Sat, 22 Aug 2026 10:00:05 +0700</pubDate>
+<title><![CDATA[IHSG Ditutup Menguat 0,5% ke 7.500]]></title>
+<link>https://www.cnbcindonesia.com/market/story-1</link>
+</item>
+<item>
+<pubDate>Sat, 22 Aug 2026 09:15:00 +0700</pubDate>
+<title>Rupiah &amp; Dolar AS Bergerak Variatif</title>
+<link>https://www.cnbcindonesia.com/market/story-2</link>
+</item>
+<item>
+<pubDate>Fri, 21 Aug 2026 23:00:00 +0700</pubDate>
+<link>https://www.cnbcindonesia.com/market/story-3-no-title</link>
+</item>
+<item>
+<pubDate>Fri, 21 Aug 2026 22:00:00 +0700
+<title><![CDATA[Truncated item, never closed]]></title>
+</channel></rss>`;
+
+describe('parseRssItems — CNBC Indonesia market RSS', () => {
+  test('extracts CDATA-wrapped titles (the normal case)', () => {
+    const items = parseRssItems(RSS_FIXTURE);
+    strictEqual(items[0].title, 'IHSG Ditutup Menguat 0,5% ke 7.500');
+    strictEqual(items[0].link, 'https://www.cnbcindonesia.com/market/story-1');
+    ok(items[0].pubDate instanceof Date && !isNaN(items[0].pubDate), 'pubDate parsed');
+  });
+
+  test('decodes HTML entities in a plain (non-CDATA) title', () => {
+    const items = parseRssItems(RSS_FIXTURE);
+    strictEqual(items[1].title, 'Rupiah & Dolar AS Bergerak Variatif');
+  });
+
+  test('skips a malformed/truncated item instead of throwing', () => {
+    // Calling this at all is the throw check — node:test fails the test if it
+    // throws. Item 3 has no <title> (filtered), item 4 never closes </item>
+    // (never matched as a block at all) — only the two well-formed items survive.
+    const items = parseRssItems(RSS_FIXTURE);
+    strictEqual(items.length, 2);
+  });
+
+  test('empty or garbage input yields an empty list, not a throw', () => {
+    strictEqual(parseRssItems('').length, 0);
+    strictEqual(parseRssItems('not xml at all').length, 0);
+  });
+});
+
+describe('wibDateString — UTC+7, no DST', () => {
+  test('a UTC timestamp already past 17:00 has rolled to the next WIB day', () => {
+    // 17:30 UTC + 7h = 00:30 the next calendar day in WIB.
+    strictEqual(wibDateString(new Date('2026-08-21T17:30:00Z')), '2026-08-22');
+  });
+
+  test('a UTC timestamp just before the boundary is still the same WIB day', () => {
+    // 16:59 UTC + 7h = 23:59 the same calendar day in WIB.
+    strictEqual(wibDateString(new Date('2026-08-21T16:59:00Z')), '2026-08-21');
+  });
+});
+
+describe('filterToday — headlines straddling the UTC/WIB day boundary', () => {
+  test('keeps only headlines whose WIB calendar day matches, across the boundary', () => {
+    const headlines = [
+      { title: 'just after WIB midnight', pubDate: new Date('2026-08-21T17:30:00Z') }, // WIB 2026-08-22
+      { title: 'just before WIB midnight', pubDate: new Date('2026-08-21T16:59:00Z') }, // WIB 2026-08-21
+      { title: 'mid-morning WIB', pubDate: new Date('2026-08-22T03:00:00Z') }, // WIB 2026-08-22
+      { title: 'no pubDate', pubDate: null },
+    ];
+    const kept = filterToday(headlines, '2026-08-22');
+    strictEqual(kept.length, 2);
+    ok(kept.every(h => h.title !== 'just before WIB midnight'));
+    ok(kept.every(h => h.title !== 'no pubDate'));
+  });
+});
+
+describe('parseScoreResponse — tolerant LLM reply parsing', () => {
+  test('valid JSON yields the correct fields', () => {
+    const v = parseScoreResponse('{"score": 42, "label": "bullish", "summary": "Markets rallied on strong earnings."}');
+    strictEqual(v.score, 42);
+    strictEqual(v.label, 'bullish');
+    strictEqual(v.summary, 'Markets rallied on strong earnings.');
+  });
+
+  test('a score outside +/-100 is clamped', () => {
+    strictEqual(parseScoreResponse('{"score": 150, "label": "x", "summary": "s"}').score, 100);
+    strictEqual(parseScoreResponse('{"score": -999, "label": "x", "summary": "s"}').score, -100);
+  });
+
+  test('a non-numeric or missing score yields null', () => {
+    strictEqual(parseScoreResponse('{"score": "very bullish", "label": "x", "summary": "s"}'), null);
+    strictEqual(parseScoreResponse('{"label": "x", "summary": "s"}'), null);
+  });
+
+  test('JSON wrapped in prose or a ```json fence is still extracted', () => {
+    const prose = `Sure, here is my assessment:\n{"score": -30, "label": "bearish", "summary": "Selloff on rate fears."}\nLet me know if you need more.`;
+    strictEqual(parseScoreResponse(prose).score, -30);
+
+    const fenced = '```json\n{"score": 15, "label": "neutral", "summary": "Mixed signals."}\n```';
+    strictEqual(parseScoreResponse(fenced).score, 15);
+  });
+
+  test('pure garbage text yields null', () => {
+    strictEqual(parseScoreResponse('I cannot complete this request.'), null);
+    strictEqual(parseScoreResponse(''), null);
   });
 });
