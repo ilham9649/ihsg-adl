@@ -14,6 +14,8 @@
 // that convention (rather than adding a stricter one here) keeps "200 weeks"
 // meaning the same thing everywhere in this codebase.
 
+import { isStaleComparison } from './yahoo.js';
+
 const MA_WEEKS = 200;
 
 function isoWeek(dateStr) {
@@ -51,18 +53,29 @@ export function weeklyCloses(bars) {
  * by how much of the bar array they pass in (see backfill-ma200w.js for a
  * historical read against a truncated array).
  *
+ * `asOfDate` is the caller's reference "today" (defaults to the last bar's
+ * own date, i.e. no staleness check — the bar IS the reference). Passing the
+ * real current date catches a suspended or reassigned ticker whose last bar
+ * is old: without this, a stock that hasn't traded in a year reads as
+ * sitting motionless AT its line (price == average, a "perfect" test) when
+ * it has really just gone silent. Same 30-day gap `isStaleComparison` already
+ * uses to reject a stale bar-to-bar comparison for breadth (yahoo.js),
+ * applied here to a stale bar-to-today instead.
+ *
  * Null when there isn't a full 200 weeks of history yet — a name listed under
  * ~3.8 years ago has no 200-week line to be near, the same honest omission
  * the Valuation page makes for companies its models can't value.
  */
-export function ma200wSnapshot(bars) {
+export function ma200wSnapshot(bars, asOfDate) {
   if (!bars?.length) return null;
   const weeks = weeklyCloses(bars);
   if (weeks.length < MA_WEEKS) return null;
 
+  const last = bars[bars.length - 1];
+  if (isStaleComparison(last.date, asOfDate ?? last.date)) return null;
+
   const trailing = weeks.slice(-MA_WEEKS);
   const ma = trailing.reduce((sum, w) => sum + w.close, 0) / MA_WEEKS;
-  const last = bars[bars.length - 1];
   const price = last.adjClose;
   if (!(ma > 0) || !(price > 0)) return null;
 

@@ -645,6 +645,18 @@ describe('ma200wSnapshot — distance from the 200-week average', () => {
     strictEqual(ma200wSnapshot([]), null);
     strictEqual(ma200wSnapshot(null), null);
   });
+
+  test('a suspended ticker\'s stale last bar is excluded, not read as sitting on the line', () => {
+    const bars = weeklyBars(200, () => 100); // last bar dated ~2025-09-27 (200 weeks from 2022-01-03)
+    const lastBarDate = bars[bars.length - 1].date;
+    // Without a reference date, the last bar IS "today" — no staleness check.
+    ok(ma200wSnapshot(bars) !== null);
+    // Same bars, but "today" is over a year past the last trade: this ticker
+    // has gone silent, not settled motionless on its average.
+    strictEqual(ma200wSnapshot(bars, '2026-08-23'), null);
+    // A reference date still close to the last bar is fine.
+    ok(ma200wSnapshot(bars, lastBarDate) !== null);
+  });
 });
 
 describe('summarizeMa200w — market-wide reading from per-ticker snapshots', () => {

@@ -62,6 +62,11 @@ async function refreshData() {
       indexMap[b.date] = { ihsgOpen: b.open, ihsgHigh: b.high, ihsgLow: b.low, ihsg: b.close };
     }
     console.log(`IHSG index bars: ${indexBars.length}`);
+    // Reference "today" for the 200-week MA staleness check below — a
+    // suspended/reassigned ticker's last bar can be long stale, and without a
+    // real reference date that reads as sitting motionless AT its line
+    // instead of what it is: a stock that hasn't traded in months.
+    const latestIndexDate = indexBars[indexBars.length - 1]?.date;
 
     // Fold each ticker's up/down/unchanged directly into per-day counts as we go,
     // instead of holding every ticker's full history in memory (≈957×1900 rows).
@@ -100,7 +105,7 @@ async function refreshData() {
           }
           successCount++;
 
-          const snap = ma200wSnapshot(quotes);
+          const snap = ma200wSnapshot(quotes, latestIndexDate);
           if (snap) ma200wRows.push({ ticker: batch[j].replace(/\.JK$/, ''), ...snap });
         } else {
           failCount++;

@@ -55,7 +55,7 @@ async function backfill() {
     const rows = [];
     for (const [ticker, bars] of barsByTicker) {
       const upTo = bars.filter(b => b.date <= date);
-      const snap = ma200wSnapshot(upTo);
+      const snap = ma200wSnapshot(upTo, date);
       if (snap) rows.push({ ticker: ticker.replace(/\.JK$/, ''), ...snap });
     }
     if (rows.length === 0) continue; // too early for any ticker to have 200 weeks yet
