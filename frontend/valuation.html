@@ -178,45 +178,54 @@
       <input type="search" id="search-input" class="search-input" placeholder="Ticker or name…" aria-label="Filter by ticker or company name">
     </div>
 
-    <!-- ─────────────  THE RANKING  ───────────── -->
+    <!-- ─────────────  THE RANKING & THE CROSS-CHECK  ─────────────
+         One ledger, two readings of it. A tab swaps which table shows — not two
+         tables stacked in full — so the page reads as one section, not a second
+         one bolted underneath. -->
     <section class="ledger reveal" style="--d:4">
-      <div class="figure-head">
-        <span class="figure-no">Tab. A</span>
-        <h2>Cheapest to Dearest</h2>
-        <span class="figure-cap">Ranked by discount to estimated intrinsic value</span>
+      <div class="ledger-tabs" role="tablist" aria-label="Choose a table">
+        <button type="button" class="ledger-tab is-active" id="tab-a" role="tab"
+                aria-selected="true" aria-controls="panel-a" data-panel="panel-a">
+          <span class="figure-no">Tab. A</span>
+          <span class="ledger-tab-name">Cheapest to Dearest</span>
+        </button>
+        <button type="button" class="ledger-tab" id="tab-b" role="tab"
+                aria-selected="false" aria-controls="panel-b" data-panel="panel-b">
+          <span class="figure-no">Tab. B</span>
+          <span class="ledger-tab-name">What It Pays, Against What It's Worth</span>
+        </button>
       </div>
-      <p class="figure-note">
-        The widest discounts first, the richest valuations last. Filtering the table also picks the
-        matching companies out of the figure above. Hover a column heading for what it measures.
-      </p>
-      <div class="table-scroll">
-        <table id="data-table" class="data-table">
-          <thead><tr></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <p class="figure-note" id="row-count"></p>
-    </section>
 
-    <!-- ─────────────  THE DIVIDEND CROSS-CHECK  ───────────── -->
-    <section class="ledger reveal" style="--d:5">
-      <div class="figure-head">
-        <span class="figure-no">Tab. B</span>
-        <h2>What It Pays, Against What It's Worth</h2>
-        <span class="figure-cap">DDM cross-check · widest gap first</span>
+      <div class="ledger-panel" id="panel-a" role="tabpanel" aria-labelledby="tab-a">
+        <p class="figure-note">
+          Ranked by discount to estimated intrinsic value — the widest discounts first, the
+          richest valuations last. Filtering the table also picks the matching companies out of
+          the figure above. Hover a column heading for what it measures.
+        </p>
+        <div class="table-scroll">
+          <table id="data-table" class="data-table">
+            <thead><tr></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="figure-note" id="row-count"></p>
       </div>
-      <p class="figure-note">
-        A second reading of the same companies, built only from dividends actually paid out — not
-        cash the business generates. Only companies with a dividend history appear here. The same
-        Model and Find controls above narrow this table too.
-      </p>
-      <div class="table-scroll">
-        <table id="ddm-table" class="data-table">
-          <thead><tr></tr></thead>
-          <tbody></tbody>
-        </table>
+
+      <div class="ledger-panel" id="panel-b" role="tabpanel" aria-labelledby="tab-b" hidden>
+        <p class="figure-note">
+          DDM cross-check, widest gap first — a second reading of the same companies, built only
+          from dividends actually paid out, not cash the business generates. Only companies with a
+          dividend history appear here. The same Model and Find controls above narrow this table
+          too.
+        </p>
+        <div class="table-scroll">
+          <table id="ddm-table" class="data-table">
+            <thead><tr></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="figure-note" id="ddm-row-count"></p>
       </div>
-      <p class="figure-note" id="ddm-row-count"></p>
     </section>
   </main>
 

@@ -434,4 +434,21 @@ async function fetchValuations() {
 
 document.getElementById('model-select').addEventListener('change', applyFilters);
 document.getElementById('search-input').addEventListener('input', applyFilters);
+
+// ── Ledger tabs ──
+// One section, two tables — a click swaps which is visible rather than
+// stacking both in full.
+for (const tab of document.querySelectorAll('.ledger-tab')) {
+  tab.addEventListener('click', () => {
+    for (const t of document.querySelectorAll('.ledger-tab')) {
+      const active = t === tab;
+      t.classList.toggle('is-active', active);
+      t.setAttribute('aria-selected', active);
+    }
+    for (const panel of document.querySelectorAll('.ledger-panel')) {
+      panel.hidden = panel.id !== tab.dataset.panel;
+    }
+  });
+}
+
 fetchValuations();

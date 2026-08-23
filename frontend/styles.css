@@ -349,6 +349,42 @@ main { max-width: var(--maxw); margin: 0 auto; }
 }
 #range-select:focus, #model-select:focus { outline: none; border-color: var(--gold); }
 
+/* ─────────────  LEDGER TABS  ─────────────
+   Two readings of one ledger, switched rather than stacked — an underline tab,
+   not the masthead's ink slab, so it doesn't read as a second page nav. */
+.ledger-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 22px;
+}
+.ledger-tab {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 260px;
+  padding: 4px 4px 12px;
+  margin-bottom: -1px;
+  font-family: var(--serif-text);
+  font-size: .96rem;
+  text-align: left;
+  color: var(--ink-faint);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color .25s, border-color .25s;
+}
+.ledger-tab + .ledger-tab { margin-left: 18px; }
+.ledger-tab:hover { color: var(--ink-soft); }
+.ledger-tab:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.ledger-tab.is-active { color: var(--ink); border-bottom-color: var(--gold); cursor: default; }
+.ledger-panel[hidden] { display: none; }
+
+@media (max-width: 620px) {
+  .ledger-tab + .ledger-tab { margin-left: 0; border-left: 1px solid var(--rule); padding-left: 14px; }
+}
+
 /* ─────────────  FIGURES  ───────────── */
 .figure { padding: 34px 0; border-bottom: 1px solid var(--rule); }
 .figure-head {
