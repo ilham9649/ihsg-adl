@@ -154,12 +154,36 @@
         average right now — regardless of which side. Hover a column heading for what it measures.
       </p>
       <div class="table-scroll">
-        <table id="data-table">
+        <table id="data-table" class="data-table">
           <thead><tr></tr></thead>
           <tbody></tbody>
         </table>
       </div>
       <p class="figure-note" id="row-count"></p>
+    </section>
+
+    <!-- ─────────────  THE DAILY RECORD  ───────────── -->
+    <div class="controls reveal" style="--d:6">
+      <span class="controls-label">Find</span>
+      <input type="search" id="trend-date-filter" class="search-input" placeholder="2026-03…" aria-label="Filter the daily record by date">
+    </div>
+    <section class="ledger reveal" style="--d:6">
+      <div class="figure-head">
+        <span class="figure-no">Tab. B</span>
+        <h2>The Daily Record</h2>
+        <span class="figure-cap">Every day behind Fig. I, most recent first</span>
+      </div>
+      <p class="figure-note">
+        One row per day this page has a reading for — the same numbers behind the chart above, listed
+        out. Click a column heading to sort by it, twice to reverse.
+      </p>
+      <div class="table-scroll">
+        <table id="trend-table" class="data-table">
+          <thead><tr></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="figure-note" id="trend-count"></p>
     </section>
   </main>
 

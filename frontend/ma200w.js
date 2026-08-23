@@ -82,6 +82,82 @@ function applyFilters() {
   renderTable(allRows.filter(matches));
 }
 
+// ── The daily record (list of old days) ──
+// Same click-to-sort / search convention as the front page's Daily Record
+// (app.js), scaled down for this page's much smaller day count.
+const TREND_COLS = [
+  { key: 'date', head: 'Date', desc: 'Trading day this reading is for', get: d => d.date, num: false },
+  { key: 'universeCount', head: 'Universe', desc: 'Stocks with a valid 200-week average that day', get: d => d.universeCount },
+  { key: 'pctNear', head: '% Near', desc: `Share within ±${NEAR_BAND}% of their own line`, get: d => d.pctNear.toFixed(1) + '%' },
+  { key: 'pctBelow', head: '% Below', desc: 'Share trading below their own line', get: d => d.pctBelow.toFixed(1) + '%' },
+];
+
+let trendSortKey = 'date';
+let trendSortDir = -1; // most recent day first
+
+function sortTrend(rows) {
+  return rows.slice().sort((a, b) => {
+    const x = a[trendSortKey], y = b[trendSortKey];
+    return x > y ? trendSortDir : x < y ? -trendSortDir : 0;
+  });
+}
+
+function renderTrendHead() {
+  const tr = document.querySelector('#trend-table thead tr');
+  if (!tr || tr.children.length) return; // static across renders
+  for (const c of TREND_COLS) {
+    const th = document.createElement('th');
+    if (c.num !== false) th.className = 'num';
+    th.scope = 'col';
+    th.title = `${c.desc} — click to sort`;
+    th.dataset.key = c.key;
+    th.tabIndex = 0;
+    th.textContent = c.head;
+    const sort = () => {
+      trendSortDir = trendSortKey === c.key ? -trendSortDir : -1;
+      trendSortKey = c.key;
+      renderTrendTable();
+    };
+    th.addEventListener('click', sort);
+    th.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sort(); }
+    });
+    tr.appendChild(th);
+  }
+}
+
+function markTrendSorted() {
+  document.querySelectorAll('#trend-table thead th').forEach(th => {
+    const on = th.dataset.key === trendSortKey;
+    th.dataset.sorted = on ? (trendSortDir === 1 ? 'asc' : 'desc') : '';
+    th.setAttribute('aria-sort', on ? (trendSortDir === 1 ? 'ascending' : 'descending') : 'none');
+  });
+}
+
+function renderTrendTable() {
+  renderTrendHead();
+  const query = document.getElementById('trend-date-filter').value.trim();
+  const rows = sortTrend(query ? trend.filter(d => d.date.includes(query)) : trend);
+
+  const frag = document.createDocumentFragment();
+  for (const d of rows) {
+    const tr = document.createElement('tr');
+    for (const c of TREND_COLS) {
+      const td = document.createElement('td');
+      td.textContent = c.get(d);
+      tr.appendChild(td);
+    }
+    frag.appendChild(tr);
+  }
+  document.querySelector('#trend-table tbody').replaceChildren(frag);
+  markTrendSorted();
+
+  const count = document.getElementById('trend-count');
+  count.textContent = query
+    ? `${rows.length} of ${trend.length} days match.`
+    : `${rows.length} days on record.`;
+}
+
 // ── Lede ──
 function renderLede() {
   const latest = trend[trend.length - 1];
@@ -147,6 +223,7 @@ async function fetchData() {
     renderLede();
     renderChart();
     applyFilters();
+    renderTrendTable();
   } catch (err) {
     console.error('Failed to load 200-week readings:', err);
     showEmpty('Could not load the record.');
@@ -155,4 +232,5 @@ async function fetchData() {
 
 document.getElementById('band-select').addEventListener('change', applyFilters);
 document.getElementById('search-input').addEventListener('input', applyFilters);
+document.getElementById('trend-date-filter').addEventListener('input', renderTrendTable);
 fetchData();

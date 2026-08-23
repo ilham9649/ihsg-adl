@@ -504,13 +504,13 @@ main { max-width: var(--maxw); margin: 0 auto; }
 
 .ledger { padding: 34px 0 10px; }
 .table-scroll { overflow-x: auto; max-height: 560px; overflow-y: auto; border-top: 2px solid var(--ink); }
-#data-table {
+.data-table {
   width: 100%;
   border-collapse: collapse;
   font-family: var(--mono);
   font-size: .82rem;
 }
-#data-table thead th {
+.data-table thead th {
   position: sticky;
   top: 0;
   background: var(--paper-deep);
@@ -526,31 +526,31 @@ main { max-width: var(--maxw); margin: 0 auto; }
   border-bottom: 1px solid var(--ink);
   white-space: nowrap;
 }
-#data-table th.num { text-align: right; }
-#data-table thead th:hover { color: var(--ink); background: var(--rule-soft); }
-#data-table thead th:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+.data-table th.num { text-align: right; }
+.data-table thead th:hover { color: var(--ink); background: var(--rule-soft); }
+.data-table thead th:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
 /* The sorted column carries its direction; the others show nothing, so the
    heading row stays a row of labels rather than a row of arrows. */
-#data-table thead th[data-sorted="asc"]::after  { content: ' ▲'; color: var(--gold); }
-#data-table thead th[data-sorted="desc"]::after { content: ' ▼'; color: var(--gold); }
-#data-table td {
+.data-table thead th[data-sorted="asc"]::after  { content: ' ▲'; color: var(--gold); }
+.data-table thead th[data-sorted="desc"]::after { content: ' ▼'; color: var(--gold); }
+.data-table td {
   padding: 9px 14px;
   border-bottom: 1px solid var(--rule-soft);
   font-feature-settings: 'tnum' 1;
   white-space: nowrap;
   text-align: left;
 }
-#data-table td:not(:first-child) { text-align: right; }
+.data-table td:not(:first-child) { text-align: right; }
 /* Company names are prose, not figures — left-aligned and allowed to wrap. */
-#data-table td.td-wide {
+.data-table td.td-wide {
   text-align: left;
   font-family: var(--serif-text);
   font-size: .95rem;
   max-width: 260px;
   white-space: normal;
 }
-#data-table tbody tr:nth-child(even) { background: rgba(210,196,168,.13); }
-#data-table tbody tr:hover { background: rgba(166,122,38,.12); }
+.data-table tbody tr:nth-child(even) { background: rgba(210,196,168,.13); }
+.data-table tbody tr:hover { background: rgba(166,122,38,.12); }
 .td-advance { color: var(--up); }
 .td-decline { color: var(--down); }
 .td-positive { color: var(--up); }
