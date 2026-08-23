@@ -13,8 +13,10 @@
 const LLM_URL = 'https://api.deepseek.com/chat/completions'; // OpenAI-compatible
 const LLM_MODEL = process.env.SENTIMENT_LLM_MODEL || 'deepseek-chat';
 
-// Bounds the prompt's token cost; a single day's feed rarely runs this high anyway.
-const MAX_HEADLINES = 40;
+// Bounds the prompt's token cost. news.js now merges 3 sources sorted newest
+// first, so this caps to the most recent items across all of them rather than
+// one source's whole day.
+const MAX_HEADLINES = 60;
 
 export function buildPrompt(headlines) {
   const list = headlines

@@ -1,15 +1,32 @@
 // ──────────────────────────────────────────────
-// News Scraper (CNBC Indonesia market RSS)
+// News Scraper (multiple Indonesian financial RSS feeds)
 // ──────────────────────────────────────────────
-// idx.co.id blocks server-side fetches (see tickers.js); this feed doesn't
-// block a plain `curl` from a residential IP either — but it DID 403 the
+// idx.co.id blocks server-side fetches (see tickers.js); these feeds don't
+// block a plain `curl` from a residential IP either — but CNBC's DID 403 the
 // deployed Lambda (AWS datacenter IPs score worse with Cloudflare bot
-// detection), so fetchHeadlines() spoofs a browser User-Agent, same as
-// yahoo.js. It's CNBC Indonesia's general "Market" section, so it mixes
-// genuine market-moving items with unrelated news (earthquakes, savings-account
-// tips) — the sentiment prompt filters that at scoring time, not here.
-
-const RSS_URL = 'https://www.cnbcindonesia.com/market/rss';
+// detection), so fetchOneFeed() spoofs a browser User-Agent, same as yahoo.js.
+//
+// Three sources, not one — verified individually (plain curl, then confirmed
+// CNBC's 403 in prod, see CLAUDE.md): CNBC's feed is general "Market" news
+// (mixes genuine market items with unrelated stories, disasters/how-tos);
+// Kontan's `investasi` feed is the most directly on-topic (ticker moves,
+// IHSG levels, foreign net buy/sell); Detik Finance is general economy/finance.
+// Multiple sources also means one outlet 403ing or going down for a day (as
+// CNBC did) degrades the reading instead of silently killing it — each
+// source fails independently in fetchHeadlines(), so partial coverage beats
+// none. Bisnis.com and idx.co.id-style Cloudflare JS challenges (not just a
+// UA check) can't be fetched server-side at all — skipped, not a bug.
+//
+// Backfill: investigated whether history could be pulled from the Wayback
+// Machine's CDX index for these feed URLs. CNBC's feed has only ~11 snapshots
+// over the past year (roughly monthly, not daily) — far too sparse for a
+// meaningful "one point per trading day" series, so no backfill is done; the
+// trend line starts thin from first deploy and grows one point per day.
+const RSS_SOURCES = [
+  'https://www.cnbcindonesia.com/market/rss',
+  'https://investasi.kontan.co.id/rss',
+  'https://finance.detik.com/rss',
+];
 
 // Named entities plus generic numeric refs (&#8217; / &#x2019;) — a regex parser
 // that only handles a fixed named-entity table diverges from what a real XML
@@ -51,17 +68,47 @@ export function parseRssItems(xml) {
     .filter(h => h.title);
 }
 
-export async function fetchHeadlines() {
-  const res = await fetch(RSS_URL, {
-    // Verified working from a plain local curl (no UA) at dev time, but the
-    // deployed Lambda got a 403 in prod — Cloudflare bot-scoring rates AWS
-    // datacenter IPs worse than residential ones for identical headers.
-    // Matches the User-Agent yahoo.js already spoofs for the same reason.
+async function fetchOneFeed(url) {
+  const res = await fetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return parseRssItems(await res.text());
+}
+
+/** Pure (exported for tests) — dedupe by exact title (case-insensitive; the
+ * same story often runs on more than one outlet) and sort newest first, so a
+ * downstream MAX_HEADLINES cap keeps the freshest items across all sources
+ * rather than whichever source happened to be fetched/listed first. */
+export function mergeHeadlines(lists) {
+  const headlines = [];
+  const seenTitles = new Set();
+  for (const list of lists) {
+    for (const h of list) {
+      const key = h.title.toLowerCase();
+      if (seenTitles.has(key)) continue;
+      seenTitles.add(key);
+      headlines.push(h);
+    }
+  }
+  return headlines.sort((a, b) => (b.pubDate || 0) - (a.pubDate || 0));
+}
+
+export async function fetchHeadlines() {
+  const results = await Promise.allSettled(RSS_SOURCES.map(fetchOneFeed));
+
+  const lists = [];
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') {
+      console.error(`Sentiment: news source failed, continuing without it (${RSS_SOURCES[i]}):`, r.reason?.message || r.reason);
+      return;
+    }
+    lists.push(r.value);
+  });
+  if (lists.length === 0) throw new Error('All news sources failed');
+
+  return mergeHeadlines(lists);
 }
 
 // Indonesia runs a single WIB (UTC+7) timezone with no DST, so a fixed offset

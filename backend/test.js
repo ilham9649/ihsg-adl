@@ -9,7 +9,7 @@ import { test, describe } from 'node:test';
 import { buildDailyCounts, computeSeries, isStaleComparison } from './scrapers/yahoo.js';
 import { FALLBACK_TICKERS, IDX_TICKERS, DELISTED_TICKERS, getAllTickers } from './lib/tickers.js';
 import { dcfPerShare, residualIncomePerShare, isFinancial, median, trailingTwelveMonths, mostRecent, DISCOUNT_RATE, TERMINAL_GROWTH } from './scrapers/valuation.js';
-import { parseRssItems, wibDateString, filterToday } from './scrapers/news.js';
+import { parseRssItems, mergeHeadlines, wibDateString, filterToday } from './scrapers/news.js';
 import { parseScoreResponse } from './scrapers/sentiment.js';
 
 // Helper: assert the A/D Line cumulative invariant (adLine is a genuine running
@@ -497,6 +497,32 @@ describe('parseRssItems — CNBC Indonesia market RSS', () => {
   test('empty or garbage input yields an empty list, not a throw', () => {
     strictEqual(parseRssItems('').length, 0);
     strictEqual(parseRssItems('not xml at all').length, 0);
+  });
+});
+
+describe('mergeHeadlines — combining multiple news sources', () => {
+  const h = (title, pubDate) => ({ title, link: `https://x/${title}`, pubDate: new Date(pubDate) });
+
+  test('dedupes the same story covered by more than one outlet, case-insensitively', () => {
+    const merged = mergeHeadlines([
+      [h('IHSG Ditutup Menguat', '2026-08-23T01:00:00Z')],
+      [h('ihsg ditutup menguat', '2026-08-23T01:05:00Z'), h('Rupiah Melemah', '2026-08-23T00:00:00Z')],
+    ]);
+    strictEqual(merged.length, 2, 'the repeated story counts once');
+  });
+
+  test('sorts newest first across all sources, not source-by-source', () => {
+    const merged = mergeHeadlines([
+      [h('Old from source A', '2026-08-20T00:00:00Z')],
+      [h('New from source B', '2026-08-23T00:00:00Z'), h('Mid from source B', '2026-08-22T00:00:00Z')],
+    ]);
+    strictEqual(merged[0].title, 'New from source B');
+    strictEqual(merged[1].title, 'Mid from source B');
+    strictEqual(merged[2].title, 'Old from source A');
+  });
+
+  test('an empty list of lists (every source failed) yields an empty array, not a throw', () => {
+    strictEqual(mergeHeadlines([]).length, 0);
   });
 });
 
