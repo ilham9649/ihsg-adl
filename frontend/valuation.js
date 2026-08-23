@@ -397,7 +397,7 @@ function showEmpty(message) {
 async function fetchValuations() {
   try {
     // Cache-buster: CloudFront otherwise serves a stale ranking.
-    const res = await fetch(`${API_BASE}/api/valuation?_=${Date.now()}`);
+    const res = await fetch(`${API_BASE}/api/valuation`);
     const json = await res.json();
 
     // Handle REST API v1 double-wrapped response

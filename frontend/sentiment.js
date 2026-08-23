@@ -17,7 +17,7 @@ const signed = (v) => v == null ? '—' : (v >= 0 ? '+' : '−') + Math.abs(Math
 async function fetchData() {
   try {
     // Cache-buster: CloudFront otherwise caches /api/sentiment.
-    const res = await fetch(`${API_BASE}/api/sentiment?_=${Date.now()}`);
+    const res = await fetch(`${API_BASE}/api/sentiment`);
     const json = await res.json();
 
     // Handle REST API v1 double-wrapped response

@@ -198,7 +198,7 @@ function showEmpty(message) {
 async function fetchData() {
   try {
     // Cache-buster: CloudFront otherwise serves a stale reading.
-    const res = await fetch(`${API_BASE}/api/ma200w?_=${Date.now()}`);
+    const res = await fetch(`${API_BASE}/api/ma200w`);
     const json = await res.json();
 
     // Handle REST API v1 double-wrapped response

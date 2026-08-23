@@ -8,19 +8,27 @@ import { buildValuations } from './scrapers/valuation.js';
 import { fetchHeadlines, filterToday, wibDateString } from './scrapers/news.js';
 import { scoreSentiment } from './scrapers/sentiment.js';
 import { ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
-import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, acquireRefreshLock, releaseRefreshLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
+import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, acquireRefreshLock, releaseRefreshLock, acquireValuationLock, releaseValuationLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
 
-const HEADERS = {
+const BASE_HEADERS = {
   'Content-Type': 'application/json',
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Api-Key',
   'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-  // API responses are dynamic — never let CloudFront/CDNs cache them.
-  'Cache-Control': 'no-store',
 };
 
-function response(status, body) {
-  return { statusCode: status, headers: HEADERS, body: JSON.stringify(body) };
+// GET endpoints return aggregate data that changes once a day, so they may be
+// cached briefly by CloudFront and the browser. Mutations (refresh) stay
+// uncached — they must never be served from a CDN edge.
+function response(status, body, { cacheable = false } = {}) {
+  return {
+    statusCode: status,
+    headers: {
+      ...BASE_HEADERS,
+      'Cache-Control': cacheable ? 'public, max-age=300' : 'no-store',
+    },
+    body: JSON.stringify(body),
+  };
 }
 
 function sleep(ms) {
@@ -35,6 +43,26 @@ function getPath(event) {
   let p = event.rawPath || event.path || '';
   p = p.replace(/^\/[^/]+(\/api)/, '$1');
   return p;
+}
+
+// The refresh POST routes are public (anyone who finds finance.sulaksono.id can
+// hit them) but expensive: each re-scrapes Yahoo and burns Lambda/LLM cost.
+// They are gated behind a shared secret (REFRESH_API_KEY, provisioned by
+// Terraform). The EventBridge cron path bypasses this entirely — it invokes the
+// Lambda directly under IAM, not through API Gateway.
+function getHeader(event, name) {
+  const headers = event.headers || {};
+  const lower = name.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === lower) return headers[key];
+  }
+  return null;
+}
+
+function isRefreshAuthorized(event) {
+  const key = process.env.REFRESH_API_KEY;
+  if (!key) return false; // not configured → deny (fail closed)
+  return getHeader(event, 'x-api-key') === key;
 }
 
 // Always re-scrape the full history and recompute the entire series fresh. This
@@ -175,24 +203,33 @@ async function refreshData() {
 // not with the daily breadth job. Each ticker costs three Yahoo calls, so the
 // two jobs together would exceed the 900s Lambda timeout.
 async function refreshValuations() {
-  const tickers = await getAllTickers();
-  console.log(`Valuing ${tickers.length} tickers`);
-
-  const { rows, failed } = await buildValuations(tickers);
-  if (rows.length === 0) {
-    return { success: false, message: 'No valuations computed', tickersFailed: failed };
+  const locked = await acquireValuationLock();
+  if (!locked) {
+    return { success: false, message: 'Valuation refresh already in progress', locked: true };
   }
 
-  await putValuation(rows, tickers.length);
-  console.log(`Valuation complete: ${rows.length} valued, ${failed} without usable fundamentals`);
+  try {
+    const tickers = await getAllTickers();
+    console.log(`Valuing ${tickers.length} tickers`);
 
-  return {
-    success: true,
-    message: 'Refreshed valuations',
-    tickersValued: rows.length,
-    tickersFailed: failed,
-    cheapest: rows[0]?.ticker,
-  };
+    const { rows, failed } = await buildValuations(tickers);
+    if (rows.length === 0) {
+      return { success: false, message: 'No valuations computed', tickersFailed: failed };
+    }
+
+    await putValuation(rows, tickers.length);
+    console.log(`Valuation complete: ${rows.length} valued, ${failed} without usable fundamentals`);
+
+    return {
+      success: true,
+      message: 'Refreshed valuations',
+      tickersValued: rows.length,
+      tickersFailed: failed,
+      cheapest: rows[0]?.ticker,
+    };
+  } finally {
+    await releaseValuationLock();
+  }
 }
 
 // Market-wide only (not per-ticker), and its own trigger like valuation. Unlike
@@ -264,27 +301,29 @@ export const handler = async (event) => {
 
     if (method === 'GET' && (path === '/api/ad' || path === '/api/ad/')) {
       const data = await getAllData();
-      return response(200, { success: true, count: data.length, data });
+      return response(200, { success: true, count: data.length, data }, { cacheable: true });
     }
 
     if (method === 'POST' && (path === '/api/ad/refresh' || path === '/api/ad/refresh/')) {
+      if (!isRefreshAuthorized(event)) return response(401, { error: 'Unauthorized' });
       const result = await refreshData();
       return response(200, result);
     }
 
     if (method === 'GET' && (path === '/api/valuation' || path === '/api/valuation/')) {
       const { updatedAt, attempted, rows } = await getValuation();
-      return response(200, { success: true, count: rows.length, attempted, updatedAt, data: rows });
+      return response(200, { success: true, count: rows.length, attempted, updatedAt, data: rows }, { cacheable: true });
     }
 
     if (method === 'POST' && (path === '/api/valuation/refresh' || path === '/api/valuation/refresh/')) {
+      if (!isRefreshAuthorized(event)) return response(401, { error: 'Unauthorized' });
       const result = await refreshValuations();
       return response(200, result);
     }
 
     if (method === 'GET' && (path === '/api/sentiment' || path === '/api/sentiment/')) {
       const data = await getAllSentiment();
-      return response(200, { success: true, count: data.length, data });
+      return response(200, { success: true, count: data.length, data }, { cacheable: true });
     }
 
     if (method === 'POST' && (path === '/api/sentiment/refresh' || path === '/api/sentiment/refresh/')) {
@@ -302,7 +341,7 @@ export const handler = async (event) => {
         updatedAt: snapshot.updatedAt,
         count: snapshot.rows.length,
         data: snapshot.rows,
-      });
+      }, { cacheable: true });
     }
 
     return response(404, { error: `Not found: ${method} ${path}` });
