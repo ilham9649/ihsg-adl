@@ -133,14 +133,17 @@
       </dl>
 
       <div class="terms-models">
-        <p><span class="run-in">Operating companies</span> are valued on discounted cash flow. Five
-          years of free cash flow, a closing value for everything after, debt subtracted and cash
-          added to reach what the shareholders own.</p>
+        <p><span class="run-in">Operating companies</span> are valued on a two-stage
+          <abbr title="Discounted Cash Flow">DCF</abbr>. Five years of free cash flow, a closing
+          value for everything after, debt subtracted and cash added to reach what the
+          shareholders own.</p>
         <p><span class="run-in">Banks and insurers</span> cannot be. A bank's reported free cash
           flow is deposit and lending flow — it measures the balance sheet, not the business, and a
           cash flow model reads it as enormous wealth. They are valued on <em>excess return</em>
           instead: book value, plus whatever the bank earns <em>above</em> its cost of equity. A bank
-          returning exactly 13% on book is worth its book and no more.</p>
+          returning exactly 13% on book is worth its book and no more. Which model a company gets is
+          decided by its Yahoo Finance sector — <em>Financial Services</em> or <em>Financial</em>
+          route here, everything else runs on the DCF above.</p>
         <p><span class="run-in">Companies are missing</span> from the ranking when they lose money,
           file nothing, or carry no sector. Without the sector we cannot tell which model applies,
           and a wrong model is worse than no number. These figures rank. They do not price.</p>
@@ -153,7 +156,7 @@
       <div class="select-wrap">
         <select id="model-select">
           <option value="all" selected>All Companies</option>
-          <option value="dcf">Cash Flow Only</option>
+          <option value="dcf">DCF Only</option>
           <option value="residual-income">Financials Only</option>
         </select>
       </div>

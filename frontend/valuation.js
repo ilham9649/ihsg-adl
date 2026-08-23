@@ -273,7 +273,7 @@ const TABLE_COLS = [
   { head: 'Discount', desc: 'How far the price sits below the estimate; negative means the price is above it', get: d => d.fairValue < 0 ? 'no equity value' : pct(d.upside), cls: d => tone(d.upside) },
   { head: 'Growth', desc: 'Assumed annual growth — revenue rate for cash flow, retained earnings for financials', get: d => pct(d.growth) },
   { head: 'ROE', desc: 'Return on equity; financials only', get: d => d.roe == null ? '—' : pct(d.roe) },
-  { head: 'Model', desc: 'Which valuation was used', get: d => d.model === 'dcf' ? 'cash flow' : 'excess return', num: false },
+  { head: 'Model', desc: 'Which valuation was used', get: d => d.model === 'dcf' ? 'DCF' : 'excess return', num: false },
   // Only ~40% of the universe files four clean consecutive quarters, so the
   // ranking is mixed-vintage. Print the period each row actually rests on
   // rather than implying they all share one date.
