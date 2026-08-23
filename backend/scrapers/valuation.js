@@ -71,10 +71,14 @@ export async function fetchFundamentals(ticker) {
   for (const row of data?.timeseries?.result || []) {
     const field = Object.keys(row).find(k => k !== 'meta' && k !== 'timestamp');
     if (!field) continue;
+    const entries = (row[field] || []).filter(Boolean);
+    // A coal/energy exporter (ADRO, ITMG, MEDC, PGEO, ...) often files in USD
+    // even though it trades in IDR on the IDX — Yahoo tags every line with the
+    // filing currency, so grab it once rather than assuming IDR.
+    if (!out.currency && entries[0]?.currencyCode) out.currency = entries[0].currencyCode;
     // Sorted oldest first: latest() reads the end of the series and cagr()
     // reads both ends, so a reversed series would report a decline as growth.
-    out[field] = (row[field] || [])
-      .filter(Boolean)
+    out[field] = entries
       .map(v => ({ date: v.asOfDate, value: v.reportedValue?.raw }))
       .filter(v => typeof v.value === 'number' && v.date)
       .sort((a, b) => a.date.localeCompare(b.date));
@@ -265,6 +269,23 @@ export function isFinancial(profile) {
   return FINANCIAL_SECTORS.has(profile?.sector);
 }
 
+// Every IDX ticker trades in IDR, but a handful of exporters (coal, energy,
+// geothermal — ADRO, ITMG, MEDC, PGEO, ...) file their accounts in USD. Left
+// unconverted, that per-share fair value lands ~15,000x too small and reads
+// as the company being worthless. One rate, fetched once and reused for the
+// whole run rather than once per ticker.
+const fxRateToIdr = new Map([['IDR', Promise.resolve(1)]]);
+
+function fetchFxToIdr(currency) {
+  if (!fxRateToIdr.has(currency)) {
+    const symbol = currency === 'USD' ? 'IDR=X' : `${currency}IDR=X`;
+    fxRateToIdr.set(currency, fetchChart(symbol, 5)
+      .then(bars => (bars.length ? bars[bars.length - 1].close : null))
+      .catch(() => null));
+  }
+  return fxRateToIdr.get(currency);
+}
+
 /**
  * Value one ticker. Returns null when the inputs cannot support a valuation.
  *
@@ -288,6 +309,12 @@ export async function valuateTicker(ticker) {
   const financial = isFinancial(profile);
   const valued = financial ? residualIncomePerShare(fundamentals) : dcfPerShare(fundamentals);
   if (!valued || !isFinite(valued.fairValue)) return null;
+
+  // Fundamentals and price must share a currency before they're compared —
+  // a USD fair value against an IDR price is not a discount, it's a unit error.
+  const fxRate = await fetchFxToIdr(fundamentals.currency || 'IDR');
+  if (!(fxRate > 0)) return null;
+  valued.fairValue *= fxRate;
 
   const reports = (financial ? fundamentals.annualNetIncome : fundamentals.annualFreeCashFlow) || [];
 
