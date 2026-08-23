@@ -155,7 +155,7 @@ export async function getValuation() {
 // key for that same calendar day.
 const SENTIMENT_PREFIX = 'sent#';
 
-export async function putSentiment({ date, score, label, summary, headlineCount }) {
+export async function putSentiment({ date, score, label, summary, headlineCount, source = 'live' }) {
   await client.send(new PutItemCommand({
     TableName: TABLE_NAME,
     Item: {
@@ -165,6 +165,12 @@ export async function putSentiment({ date, score, label, summary, headlineCount 
       label: { S: label || '' },
       summary: { S: summary || '' },
       headlineCount: { N: String(headlineCount) },
+      // 'live' = same-day RSS headlines (the daily pipeline); 'backfill' =
+      // retrospective search-engine results (see backfill-sentiment.js). Kept
+      // distinct because the two aren't scored from equivalent input — a
+      // backfilled day draws on whatever a search index still has, not the
+      // full same-day news cycle.
+      source: { S: source },
       updatedAt: { S: new Date().toISOString() },
     },
   }));
@@ -192,6 +198,7 @@ export async function getAllSentiment() {
       label: item.label?.S || '',
       summary: item.summary?.S || '',
       headlineCount: item.headlineCount?.N ? parseInt(item.headlineCount.N, 10) : null,
+      source: item.source?.S || 'live',
       updatedAt: item.updatedAt?.S || null,
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
