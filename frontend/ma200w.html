@@ -92,30 +92,8 @@
       </div>
     </section>
 
-    <!-- ─────────────  FIGURE  ───────────── -->
-    <section class="figure reveal" style="--d:2">
-      <div class="figure-head">
-        <span class="figure-no">Fig. I</span>
-        <h2>Share of the Market Near Its Line</h2>
-        <span class="figure-cap">% of stocks within ±5% of their own 200-week average · one point per refresh</span>
-      </div>
-      <div class="figure-body">
-        <p class="figure-note">
-          Each point is one day's reading across the whole usable universe. A stock needs about <b>3.8 years</b>
-          of trading history to have a 200-week average at all, so recently listed names are excluded rather than
-          estimated — the same honest omission the Valuation page makes for companies its models can't value.
-          There is no backfilled history before this page's first deploy: the line lengthens by one point every
-          time the daily breadth job runs.
-        </p>
-        <div class="breadth-frame">
-          <canvas id="ma200w-chart"></canvas>
-          <div class="bc-tip" id="ma200w-tip"></div>
-        </div>
-      </div>
-    </section>
-
     <!-- ─────────────  TERMS  ───────────── -->
-    <section class="figure reveal" style="--d:3">
+    <section class="figure reveal" style="--d:2">
       <div class="figure-head">
         <span class="figure-no">Note</span>
         <h2>Terms of the Reading</h2>
@@ -137,11 +115,16 @@
           that holds, or one that gets cut straight through. This page counts proximity; it does not predict
           which way it breaks.
         </p>
+        <p class="figure-note">
+          <b>Coverage.</b> A stock needs about <b>3.8 years</b> of trading history to have a 200-week average at
+          all, so recently listed names are excluded rather than estimated — the same honest omission the
+          Valuation page makes for companies its models can't value.
+        </p>
       </div>
     </section>
 
     <!-- ─────────────  CONTROLS  ───────────── -->
-    <div class="controls reveal" style="--d:4">
+    <div class="controls reveal" style="--d:3">
       <span class="controls-label">Show</span>
       <div class="select-wrap">
         <select id="band-select">
@@ -156,7 +139,7 @@
     </div>
 
     <!-- ─────────────  THE TABLE  ───────────── -->
-    <section class="ledger reveal" style="--d:5">
+    <section class="ledger reveal" style="--d:4">
       <div class="figure-head">
         <span class="figure-no">Tab. A</span>
         <h2>Closest to Their Line First</h2>
@@ -176,7 +159,7 @@
     </section>
 
     <!-- ─────────────  THE DAILY RECORD  ───────────── -->
-    <div class="controls reveal" style="--d:6">
+    <div class="controls reveal" style="--d:5">
       <span class="controls-label">Find</span>
       <input type="search" id="trend-date-filter" class="search-input" placeholder="2026-03…" aria-label="Filter the daily record by date">
     </div>
@@ -184,11 +167,11 @@
       <div class="figure-head">
         <span class="figure-no">Tab. B</span>
         <h2>The Daily Record</h2>
-        <span class="figure-cap">Every day behind Fig. I, most recent first</span>
+        <span class="figure-cap">Every day this page has read, most recent first</span>
       </div>
       <p class="figure-note">
-        One row per day this page has a reading for — the same numbers behind the chart above, listed
-        out. Click a column heading to sort by it, twice to reverse.
+        One row per day this page has a reading for — the same market-wide numbers the lede above draws its
+        headline from, listed out day by day. Click a column heading to sort by it, twice to reverse.
       </p>
       <div class="table-scroll">
         <table id="trend-table" class="data-table">
@@ -209,7 +192,6 @@
     </p>
   </footer>
 
-  <script src="breadth-chart.js"></script>
   <script src="ma200w.js"></script>
 </body>
 </html>

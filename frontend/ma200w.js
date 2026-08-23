@@ -1,14 +1,14 @@
 // ══════════════════════════════════════════════════════════════════
 // THE TREND LINE — proximity to each stock's own 200-week average
 // The backend does the computing; this page places, filters and renders it.
-// Mirrors sentiment.js (trend chart) and valuation.js (filterable table).
+// Mirrors valuation.js's filterable-table pattern, applied twice: once per
+// ticker (Tab. A) and once per day (Tab. B, the daily record).
 // ══════════════════════════════════════════════════════════════════
 
 const API_BASE = window.location.origin;
 
 let allRows = [];
 let trend = [];
-let chart = null;
 
 // ── Palette (paper broadsheet) — matches app.js/valuation.js/sentiment.js ──
 const UP = '#2f6b4f', DOWN = '#b0392c';
@@ -175,19 +175,6 @@ function renderLede() {
     `${latest.pctBelow.toFixed(1)}% of the usable universe is trading below its own 200-week average today.`;
 }
 
-function renderChart() {
-  const canvas = document.getElementById('ma200w-chart');
-  const tip = document.getElementById('ma200w-tip');
-  if (!canvas) return;
-  if (!chart) {
-    chart = new BreadthChart(canvas, tip, {
-      panel: 'series', field: 'pctNear', label: '% NEAR THEIR LINE',
-      tipLabel: `Within ±${NEAR_BAND}%`, legendLabel: '% near', unit: '%', tipAd: false,
-    });
-  }
-  chart.setData(trend);
-}
-
 function showEmpty(message) {
   document.getElementById('last-updated').textContent = message;
   document.getElementById('near-verdict').textContent = message;
@@ -221,7 +208,6 @@ async function fetchData() {
       : 'Reading on record';
 
     renderLede();
-    renderChart();
     applyFilters();
     renderTrendTable();
   } catch (err) {
