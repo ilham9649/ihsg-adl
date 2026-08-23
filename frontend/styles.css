@@ -335,7 +335,7 @@ main { max-width: var(--maxw); margin: 0 auto; }
   pointer-events: none;
   color: var(--gold);
 }
-#range-select, #model-select {
+#range-select, #model-select, #band-select {
   appearance: none;
   font-family: var(--serif-text);
   font-style: italic;
@@ -347,7 +347,7 @@ main { max-width: var(--maxw); margin: 0 auto; }
   padding: 5px 34px 5px 4px;
   cursor: pointer;
 }
-#range-select:focus, #model-select:focus { outline: none; border-color: var(--gold); }
+#range-select:focus, #model-select:focus, #band-select:focus { outline: none; border-color: var(--gold); }
 
 /* ─────────────  LEDGER TABS  ─────────────
    Two readings of one ledger, switched rather than stacked — an underline tab,
