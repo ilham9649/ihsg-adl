@@ -466,6 +466,12 @@ const RSS_FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
 <link>https://www.cnbcindonesia.com/market/story-2</link>
 </item>
 <item>
+<pubDate>Sat, 22 Aug 2026 08:00:00 +0700</pubDate>
+<title><![CDATA[IHSG Anjlok 2,1% ke 7.100]]></title>
+<description><![CDATA[ <img src="https://example.com/x.jpeg"/> Investor asing bukukan net sell Rp1,2 triliun di tengah kekhawatiran suku bunga&nbsp;(data BEI).]]></description>
+<link>https://www.cnbcindonesia.com/market/story-2b</link>
+</item>
+<item>
 <pubDate>Fri, 21 Aug 2026 23:00:00 +0700</pubDate>
 <link>https://www.cnbcindonesia.com/market/story-3-no-title</link>
 </item>
@@ -487,12 +493,21 @@ describe('parseRssItems — CNBC Indonesia market RSS', () => {
     strictEqual(items[1].title, 'Rupiah & Dolar AS Bergerak Variatif');
   });
 
+  test('folds <description> into title, stripping embedded markup and decoding &nbsp;', () => {
+    const items = parseRssItems(RSS_FIXTURE);
+    strictEqual(
+      items[2].title,
+      'IHSG Anjlok 2,1% ke 7.100 — Investor asing bukukan net sell Rp1,2 triliun di tengah kekhawatiran suku bunga (data BEI).'
+    );
+    ok(!items[2].title.includes('&nbsp;'), '&nbsp; is an HTML entity, not valid XML — must not leak through undecoded');
+  });
+
   test('skips a malformed/truncated item instead of throwing', () => {
     // Calling this at all is the throw check — node:test fails the test if it
-    // throws. Item 3 has no <title> (filtered), item 4 never closes </item>
-    // (never matched as a block at all) — only the two well-formed items survive.
+    // throws. The no-title item is filtered, the never-closed item never
+    // matches as a block at all — only the three well-formed items survive.
     const items = parseRssItems(RSS_FIXTURE);
-    strictEqual(items.length, 2);
+    strictEqual(items.length, 3);
   });
 
   test('empty or garbage input yields an empty list, not a throw', () => {

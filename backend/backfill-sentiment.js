@@ -27,12 +27,21 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
+// Restricting to "IHSG" alone under-covers the day — real market moves get
+// reported without ever naming the index (a dividend announcement, a foreign
+// net-sell story, a rupiah move). Empirically, dropping the keyword entirely
+// returns almost nothing (Brave needs *some* term to rank against under a
+// site:+freshness filter) — an OR of the terms an Indonesian market piece
+// actually uses gets close to the live RSS pipeline's "whole day's feed"
+// coverage without pulling in the unrelated stories those feeds also carry.
+const TOPIC_TERMS = '(IHSG OR saham OR bursa OR rupiah OR ekonomi)';
+
 async function fetchBraveHeadlines(domain, date) {
   const apiKey = process.env.BRAVE_API_KEY;
   if (!apiKey) throw new Error('BRAVE_API_KEY not set');
 
-  const q = encodeURIComponent(`site:${domain} IHSG`);
-  const res = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${q}&freshness=${date}to${date}&count=10`, {
+  const q = encodeURIComponent(`site:${domain} ${TOPIC_TERMS}`);
+  const res = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${q}&freshness=${date}to${date}&count=20`, {
     headers: { Accept: 'application/json', 'X-Subscription-Token': apiKey },
     signal: AbortSignal.timeout(15000),
   });
@@ -53,11 +62,15 @@ async function fetchBraveHeadlines(domain, date) {
 
 async function backfill() {
   const existing = await getAllSentiment();
-  const existingDates = new Set(existing.map(r => r.date));
+  // Never overwrite a 'live' reading (real same-day news). A 'backfill' row is
+  // fair game to re-run over — it's the lower-fidelity path by design, and a
+  // re-run with a wider query or a better prompt should be able to upgrade it
+  // rather than being permanently skipped because a row already exists.
+  const liveDates = new Set(existing.filter(r => r.source === 'live').map(r => r.date));
 
   const indexBars = await fetchChart('^JKSE', BACKFILL_CALENDAR_DAYS);
-  const dates = indexBars.map(b => b.date).filter(d => !existingDates.has(d));
-  console.log(`${dates.length} trading day(s) to backfill (${indexBars.length - dates.length} already have a reading).`);
+  const dates = indexBars.map(b => b.date).filter(d => !liveDates.has(d));
+  console.log(`${dates.length} trading day(s) to backfill (${indexBars.length - dates.length} already have a live reading).`);
 
   let written = 0;
   let skipped = 0;

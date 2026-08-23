@@ -24,11 +24,19 @@ export function buildPrompt(headlines) {
     .map((h, i) => `${i + 1}. ${h.title}`)
     .join('\n');
 
-  return `You are a financial market analyst. Below are today's Indonesian news headlines from a general market news feed — some are about the stock market (IHSG / Jakarta Composite Index), others are unrelated (natural disasters, consumer banking tips, etc).
+  return `You are a financial market analyst. Below are today's Indonesian news headlines, each with a short summary, from general market/finance news feeds — some are about the stock market (IHSG / Jakarta Composite Index) and the economy, others are unrelated (natural disasters, consumer banking tips, retail promotions, etc).
 
 ${list}
 
-Ignoring the unrelated headlines, rate overall MARKET-WIDE sentiment for the Indonesian stock market today, from -100 (extremely bearish/panic) to +100 (extremely bullish/euphoria), 0 = neutral. If none of the headlines are market-relevant, return a score of 0 and say so in the summary.
+Ignore the unrelated headlines. Rate overall MARKET-WIDE sentiment for the Indonesian stock market (IHSG) today, from -100 (extremely bearish/panic) to +100 (extremely bullish/euphoria), 0 = neutral.
+
+Weigh the relevant headlines — do not treat them as equally important and average them:
+- Market-wide news (IHSG index level or percentage moves, Bank Indonesia rate decisions, the rupiah, foreign fund inflows/outflows, major macro or political events) matters most.
+- Sector-wide news matters more than a single company's news.
+- A single stock's earnings, dividend, or corporate action matters least, unless it's large enough to move the whole index.
+- Where a headline or summary states a specific magnitude (a percentage move, a Rupiah figure, a fund-flow amount), let that magnitude set how strongly it should pull the score — a small reported move should not swing the score as hard as a large one.
+
+If none of the headlines are market-relevant, return a score of 0 and say so in the summary.
 
 Respond with ONLY one JSON object, no markdown fences, no other text:
 {"score": <integer -100 to 100>, "label": "<very bearish|bearish|neutral|bullish|very bullish>", "summary": "<one sentence, max 200 characters, explaining the reading>"}`;

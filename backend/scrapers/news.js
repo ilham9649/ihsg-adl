@@ -32,7 +32,13 @@ const RSS_SOURCES = [
 // that only handles a fixed named-entity table diverges from what a real XML
 // parser decodes, which is exactly the kind of gap a crafted feed item can use
 // to smuggle content past it undecoded.
-const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+// The XML set (amp/lt/gt/quot/apos) plus the handful of HTML entities these
+// CMS-rendered <description> fields actually emit (nbsp shows up constantly).
+const ENTITIES = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'",
+  nbsp: ' ', mdash: '—', ndash: '–', hellip: '…',
+  lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”',
+};
 function decodeEntities(s) {
   return s.replace(/&(#x?[0-9a-fA-F]+|\w+);/g, (m, e) => {
     if (e[0] !== '#') return ENTITIES[e] ?? m;
@@ -47,8 +53,13 @@ function extractTag(block, tag) {
   const raw = m[1].match(/^<!\[CDATA\[([\s\S]*)\]\]>$/);
   // Collapse embedded newlines/control chars: titles feed straight into a
   // numbered list in the sentiment LLM prompt, and a raw newline there would
-  // let one crafted headline masquerade as extra list entries.
-  return decodeEntities((raw ? raw[1] : m[1])).replace(/\s+/g, ' ').trim();
+  // let one crafted headline masquerade as extra list entries. <description>
+  // carries a leading <img .../> in all three feeds, so markup is stripped
+  // here too rather than in a description-only path.
+  return decodeEntities((raw ? raw[1] : m[1]))
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function parseDate(raw) {
@@ -56,15 +67,25 @@ function parseDate(raw) {
   return d && !isNaN(d) ? d : null;
 }
 
-/** Pure parser (exported for tests) — title/link/pubDate out of an RSS <item> list. */
+/** Pure parser (exported for tests) — title/link/pubDate out of an RSS <item> list.
+ * All three feeds also carry a one-sentence <description> (the publisher's own
+ * summary, not the full article body) — folded into `title` as "title —
+ * description" so a bare headline like "IHSG Turun 1,59%" gets the magnitude/
+ * cause context needed to judge how material the move actually is, without a
+ * second field for every downstream consumer (mergeHeadlines, the LLM prompt)
+ * to know about. */
 export function parseRssItems(xml) {
   const blocks = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
   return blocks
-    .map(b => ({
-      title: extractTag(b, 'title'),
-      link: extractTag(b, 'link'),
-      pubDate: parseDate(extractTag(b, 'pubDate')),
-    }))
+    .map(b => {
+      const title = extractTag(b, 'title');
+      const description = extractTag(b, 'description');
+      return {
+        title: description ? `${title} — ${description}` : title,
+        link: extractTag(b, 'link'),
+        pubDate: parseDate(extractTag(b, 'pubDate')),
+      };
+    })
     .filter(h => h.title);
 }
 
