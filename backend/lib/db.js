@@ -197,6 +197,81 @@ export async function getAllSentiment() {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+// ── 200-Week MA ──
+// Two different shapes for two different questions, mirroring the two
+// patterns already established above:
+//   - "how has the market read over time?" -> one small item PER DAY
+//     (`ma200w#YYYY-MM-DD`, same prefix scheme as Sentiment), just a few
+//     numbers each, scanned and kept forever — cheap even after years.
+//   - "which stocks are near their line TODAY?" -> one single item
+//     (`_ma200w_latest`, same pattern as Valuation's `_valuation`), holding
+//     the full per-ticker table, overwritten on every refresh. There is no
+//     reason to pay to store (and re-scan) a ~850-row table every day when
+//     only the latest one is ever shown.
+const MA200W_PREFIX = 'ma200w#';
+const MA200W_SNAPSHOT_KEY = '_ma200w_latest';
+
+export async function putMa200wDaily({ date, universeCount, pctNear, pctBelow }) {
+  await client.send(new PutItemCommand({
+    TableName: TABLE_NAME,
+    Item: {
+      date: { S: `${MA200W_PREFIX}${date}` },
+      day: { S: date },
+      universeCount: { N: String(universeCount) },
+      pctNear: { N: String(pctNear) },
+      pctBelow: { N: String(pctBelow) },
+    },
+  }));
+}
+
+export async function getAllMa200wDaily() {
+  const items = [];
+  let lastEvaluatedKey;
+  do {
+    const result = await client.send(new ScanCommand({
+      TableName: TABLE_NAME,
+      FilterExpression: 'begins_with(#d, :p)',
+      ExpressionAttributeNames: { '#d': 'date' },
+      ExpressionAttributeValues: { ':p': { S: MA200W_PREFIX } },
+      ExclusiveStartKey: lastEvaluatedKey,
+    }));
+    items.push(...(result.Items || []));
+    lastEvaluatedKey = result.LastEvaluatedKey;
+  } while (lastEvaluatedKey);
+
+  return items
+    .map(item => ({
+      date: item.day.S,
+      universeCount: parseInt(item.universeCount.N, 10),
+      pctNear: parseFloat(item.pctNear.N),
+      pctBelow: parseFloat(item.pctBelow.N),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export async function putMa200wSnapshot(rows) {
+  await client.send(new PutItemCommand({
+    TableName: TABLE_NAME,
+    Item: {
+      date: { S: MA200W_SNAPSHOT_KEY },
+      updatedAt: { S: new Date().toISOString() },
+      rows: { S: JSON.stringify(rows) },
+    },
+  }));
+}
+
+export async function getMa200wSnapshot() {
+  const result = await client.send(new GetItemCommand({
+    TableName: TABLE_NAME,
+    Key: { date: { S: MA200W_SNAPSHOT_KEY } },
+  }));
+  if (!result.Item?.rows?.S) return { updatedAt: null, rows: [] };
+  return {
+    updatedAt: result.Item.updatedAt?.S || null,
+    rows: JSON.parse(result.Item.rows.S),
+  };
+}
+
 // ── Generic short-lived lock (TTL-gated conditional PutItem) ──
 // Same primitive serves two different jobs: a mutex (block a second run while
 // one is in flight) and a cooldown (block rapid repeats even sequentially).

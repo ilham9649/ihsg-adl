@@ -7,7 +7,8 @@ import { fetchChart, fetchQuotes, computeSeries, isStaleComparison } from './scr
 import { buildValuations } from './scrapers/valuation.js';
 import { fetchHeadlines, filterToday, wibDateString } from './scrapers/news.js';
 import { scoreSentiment } from './scrapers/sentiment.js';
-import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, acquireRefreshLock, releaseRefreshLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
+import { ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
+import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, acquireRefreshLock, releaseRefreshLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
 
 const HEADERS = {
   'Content-Type': 'application/json',
@@ -65,6 +66,9 @@ async function refreshData() {
     // Fold each ticker's up/down/unchanged directly into per-day counts as we go,
     // instead of holding every ticker's full history in memory (≈957×1900 rows).
     const dayMap = {}; // date -> { date, advances, declines, unchanged }
+    // 200-week MA distance rides along on the SAME fetch — DAYS_BACK already
+    // covers far more than 200 weeks, so this costs zero extra Yahoo calls.
+    const ma200wRows = [];
     let successCount = 0;
     let failCount = 0;
 
@@ -75,7 +79,8 @@ async function refreshData() {
       const batch = tickers.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(batch.map(ticker => fetchQuotes(ticker, DAYS_BACK)));
 
-      for (const quotes of results) {
+      for (let j = 0; j < batch.length; j++) {
+        const quotes = results[j];
         const MIN_DATA_POINTS = 10;
         if (quotes.length >= MIN_DATA_POINTS) {
           for (let k = 1; k < quotes.length; k++) {
@@ -94,6 +99,9 @@ async function refreshData() {
             else day.unchanged++;
           }
           successCount++;
+
+          const snap = ma200wSnapshot(quotes);
+          if (snap) ma200wRows.push({ ticker: batch[j].replace(/\.JK$/, ''), ...snap });
         } else {
           failCount++;
         }
@@ -131,7 +139,17 @@ async function refreshData() {
       await deleteDates(staleDates);
     }
 
-    console.log(`Refresh complete: ${successCount} OK, ${failCount} failed, ${series.length} days stored`);
+    // Today's per-ticker table overwrites the single snapshot (like
+    // Valuation); the market-wide reading joins the daily time series (like
+    // Sentiment) so the trend gains one point per refresh, indefinitely.
+    if (ma200wRows.length > 0) {
+      ma200wRows.sort((a, b) => Math.abs(a.pctFromMa) - Math.abs(b.pctFromMa));
+      await putMa200wSnapshot(ma200wRows);
+      const latestDate = series[series.length - 1]?.date;
+      if (latestDate) await putMa200wDaily({ date: latestDate, ...summarizeMa200w(ma200wRows) });
+    }
+
+    console.log(`Refresh complete: ${successCount} OK, ${failCount} failed, ${series.length} days stored, ${ma200wRows.length} with a 200w MA`);
 
     return {
       success: true,
@@ -141,6 +159,7 @@ async function refreshData() {
       daysStored: series.length,
       daysDropped: staleDates.length,
       latestDate: series[series.length - 1]?.date,
+      ma200wTickers: ma200wRows.length,
     };
   } finally {
     await releaseRefreshLock();
@@ -266,6 +285,19 @@ export const handler = async (event) => {
     if (method === 'POST' && (path === '/api/sentiment/refresh' || path === '/api/sentiment/refresh/')) {
       const result = await refreshSentiment();
       return response(200, result);
+    }
+
+    // No separate refresh route: this rides along with /api/ad/refresh (or the
+    // daily breadth cron), so there is nothing new to trigger here.
+    if (method === 'GET' && (path === '/api/ma200w' || path === '/api/ma200w/')) {
+      const [trend, snapshot] = await Promise.all([getAllMa200wDaily(), getMa200wSnapshot()]);
+      return response(200, {
+        success: true,
+        trend,
+        updatedAt: snapshot.updatedAt,
+        count: snapshot.rows.length,
+        data: snapshot.rows,
+      });
     }
 
     return response(404, { error: `Not found: ${method} ${path}` });
