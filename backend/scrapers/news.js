@@ -1,9 +1,11 @@
 // ──────────────────────────────────────────────
 // News Scraper (CNBC Indonesia market RSS)
 // ──────────────────────────────────────────────
-// idx.co.id blocks server-side fetches (see tickers.js); this feed does not —
-// verified with a plain `curl`, no browser/User-Agent spoofing needed, 200 OK
-// with real XML. It's CNBC Indonesia's general "Market" section, so it mixes
+// idx.co.id blocks server-side fetches (see tickers.js); this feed doesn't
+// block a plain `curl` from a residential IP either — but it DID 403 the
+// deployed Lambda (AWS datacenter IPs score worse with Cloudflare bot
+// detection), so fetchHeadlines() spoofs a browser User-Agent, same as
+// yahoo.js. It's CNBC Indonesia's general "Market" section, so it mixes
 // genuine market-moving items with unrelated news (earthquakes, savings-account
 // tips) — the sentiment prompt filters that at scoring time, not here.
 
@@ -50,7 +52,14 @@ export function parseRssItems(xml) {
 }
 
 export async function fetchHeadlines() {
-  const res = await fetch(RSS_URL, { signal: AbortSignal.timeout(15000) });
+  const res = await fetch(RSS_URL, {
+    // Verified working from a plain local curl (no UA) at dev time, but the
+    // deployed Lambda got a 403 in prod — Cloudflare bot-scoring rates AWS
+    // datacenter IPs worse than residential ones for identical headers.
+    // Matches the User-Agent yahoo.js already spoofs for the same reason.
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    signal: AbortSignal.timeout(15000),
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return parseRssItems(await res.text());
 }
