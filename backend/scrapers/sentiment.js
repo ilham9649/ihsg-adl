@@ -6,7 +6,7 @@
 // stories (earthquakes, banking how-tos), so the prompt itself does the
 // filtering: score what's relevant, ignore what isn't.
 //
-// Needs DEEPSEEK_API_KEY in the Lambda environment — not provisioned by this
+// Needs LLM_API_KEY in the Lambda environment — not provisioned by this
 // repo. Until it's set, refreshSentiment() in index.js fails cleanly (no key,
 // no write) rather than storing a bad reading.
 
@@ -33,7 +33,7 @@ Respond with ONLY one JSON object, no markdown fences, no other text:
 }
 
 async function callLLM(prompt) {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
+  const apiKey = process.env.LLM_API_KEY;
   if (!apiKey) throw new Error('Sentiment scoring is not configured');
 
   const res = await fetch(LLM_URL, {

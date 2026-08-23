@@ -117,7 +117,7 @@ A **third page** — market-wide (not per-stock) daily sentiment, scored by an L
 
 **Pipeline** (`backend/scrapers/news.js` + `backend/scrapers/sentiment.js`): fetch CNBC Indonesia's market RSS feed (`https://www.cnbcindonesia.com/market/rss` — unlike `idx.co.id`, this feed does not block server-side fetches), filter to today's WIB-calendar-day headlines (falling back to the most recent ~20 headlines on a thin news day), and send them to DeepSeek's OpenAI-compatible chat-completions API via raw `fetch` (no SDK, matching this repo's zero-dependency scraper convention) with model `deepseek-chat` (overridable, see below). The feed mixes genuine market news with unrelated stories (disasters, banking how-tos); the prompt itself does the filtering, not the scraper. A response that fails to parse is discarded rather than stored — a phantom reading in the time series is worse than a skipped day.
 
-> **Requires `DEEPSEEK_API_KEY`** in the Lambda environment — not provisioned by this repo (see *Environment Variables* below). Until it's set, `refreshSentiment()` fails cleanly (no key, no write).
+> **Requires `LLM_API_KEY`** in the Lambda environment — not provisioned by this repo (see *Environment Variables* below). Until it's set, `refreshSentiment()` fails cleanly (no key, no write).
 
 **Storage:** one DynamoDB item **per day**, like the daily breadth rows, but under key `sent#YYYY-MM-DD` — a distinct prefix from the plain `date` key so it can never collide with, or be clobbered by, the breadth refresh's full-item overwrite for that same calendar day. `getAllSentiment()` scans on `begins_with(date, "sent#")`.
 
@@ -133,7 +133,7 @@ Push to `main` triggers GitHub Actions:
 ## Environment Variables
 
 - `TABLE_NAME` — DynamoDB table name (default: `ihsg-adl`)
-- `DEEPSEEK_API_KEY` — required for the sentiment scraper (`backend/scrapers/sentiment.js`) to call DeepSeek's chat-completions API. Not provisioned anywhere in this repo — a manual step outside it. Without it, `refreshSentiment()` fails cleanly rather than writing a bad reading.
+- `LLM_API_KEY` — required for the sentiment scraper (`backend/scrapers/sentiment.js`) to call DeepSeek's chat-completions API. Not provisioned anywhere in this repo — a manual step outside it. Without it, `refreshSentiment()` fails cleanly rather than writing a bad reading.
 - `SENTIMENT_LLM_MODEL` — optional, overrides the sentiment-scoring model (default: `deepseek-chat`)
 
 ## Testing Locally
