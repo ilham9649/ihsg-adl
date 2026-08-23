@@ -82,8 +82,8 @@
         </div>
       </div>
       <div class="lede-note">
-        <p class="dropcap">Every session, a language model reads that day's headlines from a single
-          Indonesian financial news feed and files one number: how the market's mood reads, from
+        <p class="dropcap">Every session, a language model reads that day's headlines from three
+          Indonesian financial news feeds and files one number: how the market's mood reads, from
           <em>−100</em> (panic) to <em>+100</em> (euphoria), with <em>0</em> as neutral. It is a
           first-pass impression of the news, not a measurement of the market itself — the same
           headlines read twice, or read by a different model, would not always file the same
@@ -101,9 +101,10 @@
       </div>
       <div class="figure-body">
         <p class="figure-note">
-          Each point is one day's reading. The news feed only exposes a rolling window, not a deep
-          archive, so this line has no history to backfill — it starts thin and lengthens by one
-          point a day from here. Green above the neutral line, red below.
+          Each point is one day's reading. The live feeds only expose a rolling window, so the
+          first three months here were filled in after the fact from search-engine results instead
+          — from today it lengthens by one point a day, live. Green above the neutral line, red
+          below.
         </p>
         <div class="breadth-frame">
           <canvas id="sentiment-chart"></canvas>
@@ -117,21 +118,26 @@
       <div class="figure-head">
         <span class="figure-no">Note</span>
         <h2>Terms of the Reading</h2>
-        <span class="figure-cap">One feed · one model · one call a day</span>
+        <span class="figure-cap">Three feeds · one model · one call a day</span>
       </div>
       <div class="notes-grid">
         <p class="figure-note">
-          <b>Source.</b> CNBC Indonesia's general market feed — a mix of genuine market news and
-          unrelated stories (disasters, consumer banking tips). The model is asked to weigh only
-          what is actually market-relevant and ignore the rest.
+          <b>Source.</b> Three feeds — CNBC Indonesia's general market section, Kontan's investasi
+          feed, and Detik Finance — each a mix of genuine market news and unrelated stories
+          (disasters, consumer banking tips, retail promotions). The model reads each headline
+          with its own summary, weighs market-wide news over sector news over a single company's
+          news, and ignores what isn't market-relevant.
         </p>
         <p class="figure-note">
           <b>Judge.</b> One call to a language model per day, not an ensemble and not a re-read for
           consistency. Treat the number as one reader's first impression, not a poll.
         </p>
         <p class="figure-note">
-          <b>Window.</b> Whatever the feed published for that trading day, in Jakarta time —
-          typically a few dozen headlines at most, and sometimes far fewer.
+          <b>Window.</b> From today onward, whatever the three feeds published that trading day, in
+          Jakarta time — typically several dozen headlines. Further back, the feeds hold no
+          archive at all, so the first three months were filled in by asking a search engine what
+          each site published on that date instead — coverage that thins the further back it
+          reaches, which is why the line doesn't yet stretch a full year.
         </p>
       </div>
     </section>
@@ -141,7 +147,7 @@
     <div class="masthead-rule"></div>
     <p class="colophon">
       <span class="colophon-mark">❖</span>
-      Headlines from CNBC Indonesia · Scored by a language model · Not advice, and not a signal ·
+      Headlines from CNBC Indonesia, Kontan, and Detik Finance · Scored by a language model · Not advice, and not a signal ·
       <span class="colophon-site">finance.sulaksono.id</span>
     </p>
   </footer>
