@@ -266,7 +266,6 @@ const TABLE_COLS = [
   { head: 'Sector', desc: 'Business sector', get: d => d.sector || '—', num: false },
   { head: 'Price', desc: 'Latest close, rupiah', get: d => rupiah(d.price) },
   { head: 'Value', desc: 'Estimated intrinsic value per share, rupiah', get: d => rupiah(d.fairValue) },
-  { head: 'DDM', desc: 'Cross-check: value implied by dividends actually paid, not the primary model — dashed when the company pays no reliable dividend', get: d => d.ddmFairValue == null ? '—' : rupiah(d.ddmFairValue) },
   // A negative fair value means net debt exceeds the present value of the cash
   // flows — the model says the equity is worth nothing. The ratio still orders
   // the row, but printing it as "−1240%" reads as a precise measurement of
@@ -284,10 +283,12 @@ const TABLE_COLS = [
   { head: 'Accounts to', desc: 'The twelve months the figures run to — the last four quarters where a company files them cleanly, its last full financial year otherwise', get: d => d.asOf || '—' },
 ];
 
-function renderTableHead() {
-  const tr = document.querySelector('#data-table thead tr');
+// Shared by both tables on the page — the ranking and the DDM cross-check —
+// so a column spec only ever drives one rendering path.
+function renderTableHead(tableId, cols) {
+  const tr = document.querySelector(`#${tableId} thead tr`);
   if (!tr || tr.children.length) return; // static across renders
-  for (const c of TABLE_COLS) {
+  for (const c of cols) {
     const th = document.createElement('th');
     if (c.num !== false) th.className = 'num';
     th.scope = 'col';
@@ -297,14 +298,14 @@ function renderTableHead() {
   }
 }
 
-function renderTable(rows) {
-  renderTableHead();
+function fillTable(tableId, cols, rows) {
+  renderTableHead(tableId, cols);
   // Built through the DOM rather than innerHTML: every cell is set as text, so
   // no company name can ever be parsed as markup.
   const frag = document.createDocumentFragment();
   rows.forEach((d, i) => {
     const tr = document.createElement('tr');
-    for (const c of TABLE_COLS) {
+    for (const c of cols) {
       const td = document.createElement('td');
       const cls = c.cls ? c.cls(d) : null;
       if (cls) td.className = cls;
@@ -314,12 +315,38 @@ function renderTable(rows) {
     }
     frag.appendChild(tr);
   });
-  document.querySelector('#data-table tbody').replaceChildren(frag);
+  document.querySelector(`#${tableId} tbody`).replaceChildren(frag);
+}
 
+function renderTable(rows) {
+  fillTable('data-table', TABLE_COLS, rows);
   const count = document.getElementById('row-count');
   count.textContent = rows.length === allRows.length
     ? `${rows.length} companies valued.`
     : `${rows.length} of ${allRows.length} companies shown.`;
+}
+
+// ══════════════  THE DIVIDEND CROSS-CHECK  ══════════════
+// A separate table rather than an extra column on the main ranking — mixing a
+// cross-check into the primary figures made the ledger read as one confused
+// model instead of two distinct questions ("what's it worth" vs "what does it
+// pay out"). Only companies with a dividend history appear here at all.
+const DDM_COLS = [
+  { head: 'Code', desc: 'IDX ticker', get: d => d.ticker, num: false },
+  { head: 'Company', desc: 'Registered name', get: d => d.name || '—', num: false, wide: true },
+  { head: 'Price', desc: 'Latest close, rupiah', get: d => rupiah(d.price) },
+  { head: 'Value', desc: `The company's primary fair value (DCF or excess return), rupiah`, get: d => rupiah(d.fairValue) },
+  { head: 'DDM', desc: 'Value implied by dividends actually paid, rupiah', get: d => rupiah(d.ddmFairValue) },
+  { head: 'Gap', desc: 'How far the DDM sits below the primary value — how much more the company keeps than it pays out', get: d => pct(d.ddmFairValue / d.fairValue - 1) },
+];
+
+let ddmRows = [];
+
+function renderDdmTable(rows) {
+  fillTable('ddm-table', DDM_COLS, rows);
+  document.getElementById('ddm-row-count').textContent = rows.length === ddmRows.length
+    ? `${rows.length} companies with a dividend history.`
+    : `${rows.length} of ${ddmRows.length} shown.`;
 }
 
 // ── Filtering ──
@@ -337,6 +364,7 @@ function applyFilters() {
   };
 
   renderTable(allRows.filter(matches));
+  renderDdmTable(ddmRows.filter(matches));
 
   for (const m of marks) {
     const on = !filtering || matches(m.row);
@@ -384,6 +412,10 @@ async function fetchValuations() {
     // The backend already ranks these; sort again so the page never depends on
     // the order a stored payload happens to arrive in.
     allRows = payload.data.slice().sort((a, b) => b.upside - a.upside);
+    // A negative primary value has nothing to compare the DDM against, so it's
+    // excluded from the cross-check rather than shown as a meaningless ratio.
+    ddmRows = allRows.filter(r => r.ddmFairValue != null && r.fairValue > 0)
+      .sort((a, b) => (a.ddmFairValue / a.fairValue) - (b.ddmFairValue / b.fairValue));
 
     const stamp = payload.updatedAt ? new Date(payload.updatedAt) : null;
     document.getElementById('last-updated').textContent = stamp
