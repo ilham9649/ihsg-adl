@@ -347,6 +347,8 @@ export const handler = async (event) => {
     return response(404, { error: `Not found: ${method} ${path}` });
   } catch (err) {
     console.error('Handler error:', err);
-    return response(500, { error: err.message });
+    // Public route — never return raw internals (paths, env state, stack
+    // fragments) to an unauthenticated caller. Full detail goes to CloudWatch.
+    return response(500, { error: 'Internal server error' });
   }
 };
