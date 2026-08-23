@@ -159,7 +159,6 @@ function linkBreadth(bc) {
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('range-select').addEventListener('change', () => renderAll());
   document.getElementById('date-filter').addEventListener('input', () => renderTable(getFilteredData()));
-  document.getElementById('refresh-btn').addEventListener('click', refreshData);
   document.querySelectorAll('#ma-checklist input[type=checkbox]')
     .forEach(cb => cb.addEventListener('change', applyMaToggles));
   fetchData();
@@ -179,7 +178,7 @@ async function fetchData() {
   try {
     // Cache-buster: CloudFront otherwise caches /api/ad and the dashboard
     // shows stale data after a refresh.
-    const url = `${API_BASE}/api/ad?_=${Date.now()}`;
+    const url = `${API_BASE}/api/ad`;
     const res = await fetch(url);
     const json = await res.json();
 
@@ -223,42 +222,6 @@ async function fetchData() {
     errorValue.textContent = err.message;
     errorCard.appendChild(errorValue);
     cards.appendChild(errorCard);
-  }
-}
-
-async function refreshData() {
-  const btn = document.getElementById('refresh-btn');
-  const lastUpdated = document.getElementById('last-updated');
-  btn.disabled = true;
-  btn.textContent = 'Refreshing...';
-  lastUpdated.textContent = 'Refreshing data...';
-
-  try {
-    const res = await fetch(`${API_BASE}/api/ad/refresh`, { method: 'POST' });
-    const json = await res.json();
-
-    if (json.success) {
-      btn.textContent = '✓ Done';
-      lastUpdated.textContent = `Refreshed: ${json.latestDate || 'just now'}`;
-      setTimeout(() => { btn.textContent = '↻ Refresh'; btn.disabled = false; }, 2000);
-      // Re-fetch
-      await fetchData();
-    } else {
-      btn.textContent = '✗ Failed';
-      const errorMsg = json.locked ? ' (refresh in progress)' : json.message || 'unknown error';
-      lastUpdated.textContent = `Failed:${errorMsg}`;
-      lastUpdated.style.color = '#ef4444';
-      setTimeout(() => {
-        btn.textContent = '↻ Refresh';
-        btn.disabled = false;
-        lastUpdated.style.color = '';
-      }, 5000);
-    }
-  } catch (err) {
-    btn.textContent = '✗ Error';
-    document.getElementById('last-updated').textContent = `Error: ${err.message}`;
-    document.getElementById('last-updated').style.color = '#ef4444';
-    setTimeout(() => { btn.textContent = '↻ Refresh'; btn.disabled = false; }, 2000);
   }
 }
 

@@ -319,6 +319,19 @@ export async function releaseRefreshLock() {
   return releaseLock(LOCK_KEY);
 }
 
+// ── Valuation Lock — the valuation run is its own ~500s job (three Yahoo calls
+// per ticker); block overlapping runs the same way as the breadth scrape ──
+const VALUATION_LOCK_KEY = '_valuation_lock';
+const VALUATION_LOCK_TTL_MS = 45 * 60 * 1000;
+
+export async function acquireValuationLock() {
+  return acquireLock(VALUATION_LOCK_KEY, VALUATION_LOCK_TTL_MS);
+}
+
+export async function releaseValuationLock() {
+  return releaseLock(VALUATION_LOCK_KEY);
+}
+
 // ── Sentiment cooldown — each refresh is a billed LLM call behind a public,
 // unauthenticated POST route. This blocks rapid repeats (accidental or
 // deliberate) rather than leaving that route free to spam. 5 minutes is well
