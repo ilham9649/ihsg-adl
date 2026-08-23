@@ -448,6 +448,27 @@ main { max-width: var(--maxw); margin: 0 auto; }
 .figure-note em { font-style: italic; color: var(--ink); }
 .mark-key { color: var(--gold); font-style: normal; }
 
+/* Two-column figure body: the standfirst sits beside its chart instead of
+   stacked above it, so every figure reads across the full measure rather than
+   hugging the left edge with a dead band to the right. Collapses to one column
+   on narrow screens. */
+.figure-body {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 2.3fr;
+  gap: 28px;
+  align-items: center;
+}
+.figure-body .figure-note { margin: 0; max-width: none; }
+.figure-chart { display: flex; flex-direction: column; gap: 14px; }
+
+/* A "Note" section with several standfirst paragraphs, set side by side. */
+.notes-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 28px;
+}
+.notes-grid .figure-note { margin: 0; max-width: none; }
+
 .breadth-frame { position: relative; height: 360px; }
 .breadth-frame canvas { width: 100% !important; height: 100% !important; display: block; }
 
@@ -591,6 +612,9 @@ footer { max-width: var(--maxw); margin: 54px auto 0; }
   .stat:nth-child(3) { border-right: none; }
   .stat:nth-child(-n+3) { border-bottom: 1px solid var(--rule-soft); }
   .figure-cap { margin-left: 0; flex-basis: 100%; }
+  .figure-body { grid-template-columns: 1fr; align-items: start; }
+  .figure-body .figure-note { margin-bottom: 18px; }
+  .notes-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 480px) {
   body { font-size: 16px; }
