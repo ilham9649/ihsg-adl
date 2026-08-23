@@ -169,6 +169,18 @@ export function cagr(series) {
 
 const clamp = (x, lo, hi) => Math.min(Math.max(x, lo), hi);
 
+/** PV of a flow growing at `growth` for FORECAST_YEARS, then a Gordon terminal value. */
+function presentValueOfGrowingFlow(flow0, growth) {
+  let flow = flow0;
+  let pv = 0;
+  for (let year = 1; year <= FORECAST_YEARS; year++) {
+    flow *= (1 + growth);
+    pv += flow / Math.pow(1 + DISCOUNT_RATE, year);
+  }
+  const terminal = (flow * (1 + TERMINAL_GROWTH)) / (DISCOUNT_RATE - TERMINAL_GROWTH);
+  return pv + terminal / Math.pow(1 + DISCOUNT_RATE, FORECAST_YEARS);
+}
+
 /**
  * Two-stage DCF. Five years of growth, then a Gordon terminal value.
  * Equity value = enterprise value − debt + cash.
@@ -188,15 +200,7 @@ export function dcfPerShare(f) {
   if (!(fcf0 > 0) || !(shares > 0)) return null;
 
   const growth = clamp(cagr(f.annualTotalRevenue) ?? 0.05, 0, MAX_STAGE1_GROWTH);
-
-  let fcf = fcf0;
-  let pv = 0;
-  for (let year = 1; year <= FORECAST_YEARS; year++) {
-    fcf *= (1 + growth);
-    pv += fcf / Math.pow(1 + DISCOUNT_RATE, year);
-  }
-  const terminal = (fcf * (1 + TERMINAL_GROWTH)) / (DISCOUNT_RATE - TERMINAL_GROWTH);
-  const enterprise = pv + terminal / Math.pow(1 + DISCOUNT_RATE, FORECAST_YEARS);
+  const enterprise = presentValueOfGrowingFlow(fcf0, growth);
 
   const debt = mostRecent(f.annualTotalDebt, f.quarterlyTotalDebt);
   const cash = mostRecent(f.annualCashAndCashEquivalents, f.quarterlyCashAndCashEquivalents);
@@ -206,6 +210,39 @@ export function dcfPerShare(f) {
     fairValue: equity / shares,
     growth,
     model: 'dcf',
+    basis: ttm ? 'trailing' : 'annual',
+    asOf: flows[flows.length - 1]?.date || null,
+  };
+}
+
+/**
+ * Two-stage dividend discount model — a cross-check next to the fair value,
+ * not a replacement for it. Same growth and discount assumptions as the DCF,
+ * but built on cash actually paid to shareholders rather than cash the
+ * business generates. A company that hoards cash flow instead of paying it
+ * out will show a DDM well below its DCF/residual-income figure — that gap
+ * is the finding, not a flaw in either number. Null for the roughly half of
+ * the universe that pays no dividend, or an erratic one — same "omit rather
+ * than estimate" rule the rest of the page follows.
+ */
+export function ddmPerShare(f) {
+  const flows = (f.annualCashDividendsPaid || []).map(d => ({ date: d.date, value: Math.abs(d.value) }));
+  const ttmRaw = trailingTwelveMonths(f.quarterlyCashDividendsPaid);
+  const ttm = ttmRaw ? { date: ttmRaw.date, value: Math.abs(ttmRaw.value) } : null;
+  if (ttm && (!flows.length || ttm.date > flows[flows.length - 1].date)) flows.push(ttm);
+
+  const div0 = median(flows);
+  const sharesPoint = mostRecent(f.annualOrdinarySharesNumber, f.quarterlyOrdinarySharesNumber);
+  const shares = sharesPoint?.value;
+  if (!(div0 > 0) || !(shares > 0)) return null;
+
+  const growth = clamp(cagr(f.annualTotalRevenue) ?? 0.05, 0, MAX_STAGE1_GROWTH);
+  const value = presentValueOfGrowingFlow(div0, growth);
+
+  return {
+    fairValue: value / shares,
+    growth,
+    model: 'ddm',
     basis: ttm ? 'trailing' : 'annual',
     asOf: flows[flows.length - 1]?.date || null,
   };
@@ -316,6 +353,11 @@ export async function valuateTicker(ticker) {
   if (!(fxRate > 0)) return null;
   valued.fairValue *= fxRate;
 
+  // DDM runs regardless of sector — unlike the DCF/residual-income split, it
+  // doesn't need to know what kind of business this is, only what it pays out.
+  const ddm = ddmPerShare(fundamentals);
+  const ddmFairValue = ddm && isFinite(ddm.fairValue) ? Math.round(ddm.fairValue * fxRate * 100) / 100 : null;
+
   const reports = (financial ? fundamentals.annualNetIncome : fundamentals.annualFreeCashFlow) || [];
 
   return {
@@ -328,6 +370,9 @@ export async function valuateTicker(ticker) {
     growth: valued.growth,
     roe: valued.roe ?? null,
     model: valued.model,
+    // Dividend discount model, alongside the primary model as a cross-check —
+    // not a competing rank. Null when the company pays no reliable dividend.
+    ddmFairValue,
     // Which accounts this row rests on. Only about 40% of the universe files
     // four clean consecutive quarters, so the ranking is mixed-vintage: the
     // page prints asOf per row rather than implying one common date. `basis`

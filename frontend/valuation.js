@@ -266,6 +266,7 @@ const TABLE_COLS = [
   { head: 'Sector', desc: 'Business sector', get: d => d.sector || '—', num: false },
   { head: 'Price', desc: 'Latest close, rupiah', get: d => rupiah(d.price) },
   { head: 'Value', desc: 'Estimated intrinsic value per share, rupiah', get: d => rupiah(d.fairValue) },
+  { head: 'DDM', desc: 'Cross-check: value implied by dividends actually paid, not the primary model — dashed when the company pays no reliable dividend', get: d => d.ddmFairValue == null ? '—' : rupiah(d.ddmFairValue) },
   // A negative fair value means net debt exceeds the present value of the cash
   // flows — the model says the equity is worth nothing. The ratio still orders
   // the row, but printing it as "−1240%" reads as a precise measurement of
