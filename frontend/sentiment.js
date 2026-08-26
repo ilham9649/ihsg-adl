@@ -13,6 +13,20 @@ const ZONE_UP = 'rgba(47,107,79,0.10)', ZONE_DOWN = 'rgba(176,57,44,0.09)';
 
 const signed = (v) => v == null ? '—' : (v >= 0 ? '+' : '−') + Math.abs(Math.round(v));
 
+// One LLM read a day is noisy score-to-score, so smooth it with a trailing
+// average — same rationale/shape as pctAdvancing's ribbon in app.js. 7 days
+// (one trading week) since the record is only ~3 months deep so far.
+const SCORE_MA_WINDOW = 7;
+function attachScoreSmoothing(rows) {
+  for (let i = 0; i < rows.length; i++) {
+    let sum = 0, cnt = 0;
+    for (let k = Math.max(0, i - SCORE_MA_WINDOW + 1); k <= i; k++) {
+      if (rows[k].score != null) { sum += rows[k].score; cnt++; }
+    }
+    rows[i].scoreMA = cnt ? parseFloat((sum / cnt).toFixed(2)) : null;
+  }
+}
+
 // ── Fetch ──
 async function fetchData() {
   try {
@@ -26,6 +40,7 @@ async function fetchData() {
 
     if (data.success && data.data && data.data.length > 0) {
       allData = data.data;
+      attachScoreSmoothing(allData);
       document.getElementById('last-updated').textContent = `Last: ${allData[allData.length - 1].date}`;
       renderAll();
     } else {
@@ -106,7 +121,8 @@ function renderChart() {
   if (!canvas) return;
   if (!chart) {
     chart = new BreadthChart(canvas, tip, {
-      panel: 'series', field: 'score', label: 'SENTIMENT', tipLabel: 'Score', legendLabel: 'score',
+      panel: 'series', field: 'scoreMA', rawField: 'score',
+      label: 'SENTIMENT', tipLabel: `${SCORE_MA_WINDOW}-day avg`, legendLabel: `${SCORE_MA_WINDOW}d`,
       ref: 0, yMin: -100, yMax: 100, tipAd: false,
       zones: [
         { from: 0, to: Infinity, fill: ZONE_UP },

@@ -97,14 +97,15 @@
       <div class="figure-head">
         <span class="figure-no">Fig. I</span>
         <h2>The Reading, Over Time</h2>
-        <span class="figure-cap">One score per session · −100 panic to +100 euphoria · 0 neutral</span>
+        <span class="figure-cap">7-day trailing average · −100 panic to +100 euphoria · 0 neutral</span>
       </div>
       <div class="figure-body">
         <p class="figure-note">
-          Each point is one day's reading. The live feeds only expose a rolling window, so the
-          first three months here were filled in after the fact from search-engine results instead
-          — from today it lengthens by one point a day, live. Green above the neutral line, red
-          below.
+          The line is a 7-day trailing average — one LLM read a day is noisy score-to-score, so the
+          average is what carries the trend; the faint dots are each day's raw score. The live feeds
+          only expose a rolling window, so the first three months here were filled in after the fact
+          from search-engine results instead — from today it lengthens by one point a day, live.
+          Green above the neutral line, red below.
         </p>
         <div class="breadth-frame">
           <canvas id="sentiment-chart"></canvas>
