@@ -396,12 +396,9 @@ function renderCards(data) {
     const after = episodes.map(fwd).filter(v => v != null);
     const base = allData.map((_, i) => fwd(i)).filter(v => v != null);
     const pct = v => (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
-    idxCount.textContent = `${episodes.length} times (${episodes.map(i => allData[i].date.slice(0, 7)).join(', ')})`;
+    idxCount.textContent = `${episodes.length} episodes`;
     document.getElementById('idx-after').textContent = after.length ? pct(mean(after)) : '—';
-    document.getElementById('idx-n').textContent = after.length;
     document.getElementById('idx-base').textContent = base.length ? pct(mean(base)) : '—';
-    document.getElementById('idx-edge').textContent = after.length && base.length
-      ? ((mean(after) - mean(base)) * 100).toFixed(1) : '—';
   }
 
   // Constituents actually counted in the latest session (transparency: the full
