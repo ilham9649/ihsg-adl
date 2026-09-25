@@ -34,17 +34,22 @@ function attachPctSmoothing(rows) {
 // Zweig Breadth Thrust — a 10-day EMA of % Advancing. The signal is the climb
 // from an oversold ≤40 reading to ≥61.5 within 10 sessions: a rare sign that a
 // bottom was bought by the whole market rather than a few index heavyweights.
-// Attaches `zbt` (the EMA) and `thrust` (true on the triggering session).
-function attachThrust(rows, span = 10, low = 40, high = 61.5) {
+// Attaches `zbt` (the EMA), `thrust` (Zweig's 61.5 trigger) and `idxThrust`
+// (the Jakarta rule: same climb, to 56). 56 came from a 2010–2026 backtest; see
+// CLAUDE.md for why it is a watch level, not a proven signal.
+const THRUST_RULES = { thrust: 61.5, idxThrust: 56 };
+function attachThrust(rows, span = 10, low = 40) {
   const alpha = 2 / (span + 1);
   let ema = null, prev = null, lowAt = -1;
   rows.forEach((r, i) => {
-    r.thrust = false;
+    for (const f in THRUST_RULES) r[f] = false;
     if (r.pctAdvancing == null) { r.zbt = null; return; }
     ema = ema == null ? r.pctAdvancing : r.pctAdvancing * alpha + ema * (1 - alpha);
     r.zbt = parseFloat(ema.toFixed(2));
     if (ema <= low) lowAt = i;
-    if (prev != null && prev < high && ema >= high && lowAt >= 0 && i - lowAt <= span) r.thrust = true;
+    for (const [f, high] of Object.entries(THRUST_RULES)) {
+      r[f] = prev != null && prev < high && ema >= high && lowAt >= 0 && i - lowAt <= span;
+    }
     prev = ema;
   });
 }
@@ -280,12 +285,13 @@ const PANEL_SPECS = {
     // already shows the daily scatter.
     panel: 'series', field: 'zbt',
     label: 'ZWEIG THRUST', tipLabel: '10-day EMA', legendLabel: '10d EMA',
-    // Reference is 50 (neutral breadth) — colouring against the 61.5 trigger
-    // would paint the entire record red, since IDX has never reached it.
-    ref: 50, unit: '%', yMin: 20, yMax: 70, markField: 'thrust',
+    // Reference is 50 (neutral breadth) — colouring against a trigger level
+    // would paint almost the entire record red.
+    ref: 50, unit: '%', yMin: 20, yMax: 70, markField: 'idxThrust',
     zones: [
-      { from: -Infinity, to: 40, fill: ZONE_FAINT }, // oversold setup
-      { from: 61.5, to: Infinity, fill: ZONE_UP },   // the thrust zone
+      { from: -Infinity, to: 40, fill: ZONE_FAINT },           // oversold setup
+      { from: THRUST_RULES.idxThrust, to: Infinity, fill: ZONE_UP }, // Jakarta rule
+      { from: THRUST_RULES.thrust, to: Infinity, fill: ZONE_UP },    // Zweig's bar, stacks darker
     ],
   },
 
@@ -377,6 +383,26 @@ function renderCards(data) {
       : hits.length === 2 ? `twice, both in ${years}`
       : `${hits.length} times, in ${years}`;
   }
+  // Jakarta rule: triggers cluster, so count episodes (≥63 sessions apart) and
+  // compare the IHSG's six-month return after each with an ordinary day's.
+  const idxCount = document.getElementById('idx-count');
+  if (idxCount) {
+    const H = 126;
+    const fwd = i => i + H < allData.length && allData[i].ihsg && allData[i + H].ihsg
+      ? allData[i + H].ihsg / allData[i].ihsg - 1 : null;
+    const mean = v => v.reduce((a, b) => a + b, 0) / v.length;
+    const hits = allData.map((d, i) => d.idxThrust ? i : -1).filter(i => i >= 0);
+    const episodes = hits.filter((i, k) => k === 0 || i - hits[k - 1] > 63);
+    const after = episodes.map(fwd).filter(v => v != null);
+    const base = allData.map((_, i) => fwd(i)).filter(v => v != null);
+    const pct = v => (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
+    idxCount.textContent = `${episodes.length} times (${episodes.map(i => allData[i].date.slice(0, 7)).join(', ')})`;
+    document.getElementById('idx-after').textContent = after.length ? pct(mean(after)) : '—';
+    document.getElementById('idx-n').textContent = after.length;
+    document.getElementById('idx-base').textContent = base.length ? pct(mean(base)) : '—';
+    document.getElementById('idx-edge').textContent = after.length && base.length
+      ? ((mean(after) - mean(base)) * 100).toFixed(1) : '—';
+  }
 
   // Constituents actually counted in the latest session (transparency: the full
   // discovered IDX universe, minus any that didn't trade / lacked a prior close).
@@ -416,7 +442,7 @@ const TABLE_COLS = [
   { key: 'pctAdvancingMA100', head: '100d', desc: '100-day average of % Advancing', get: d => num(d.pctAdvancingMA100), cls: d => above(50)(d.pctAdvancingMA100) },
   { key: 'pctAdvancingMA200', head: '200d', desc: '200-day average of % Advancing', get: d => num(d.pctAdvancingMA200), cls: d => above(50)(d.pctAdvancingMA200) },
   { key: 'mcClellan', head: 'McClellan', desc: '19 less 39-day EMA of the spread; 0 is neutral', get: d => signed(d.mcClellan, 1), cls: d => above(0)(d.mcClellan) },
-  { key: 'zbt', head: 'ZBT', desc: 'Zweig Breadth Thrust: 10-day EMA of % Advancing; triggers above 61.5', get: d => num(d.zbt), cls: d => above(50)(d.zbt) },
+  { key: 'zbt', head: 'ZBT', desc: 'Zweig Breadth Thrust: 10-day EMA of % Advancing; Zweig triggers at 61.5, the Jakarta rule at 56', get: d => num(d.zbt), cls: d => above(50)(d.zbt) },
   { key: 'stochK', head: '%K', desc: 'Weekly stochastic (15,3,3); below 20 oversold, above 80 overbought', get: d => num(d.stochK), cls: d => above(50)(d.stochK) },
   { key: 'stochD', head: '%D', desc: 'Three-week average of %K', get: d => num(d.stochD), cls: d => above(50)(d.stochD) },
   { key: 'shinSpread', head: 'W−S', desc: 'Shinohara Weak minus Strong; above 100 extremely oversold', get: d => num(d.shinSpread), cls: d => above(0)(d.shinSpread) },
