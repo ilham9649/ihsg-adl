@@ -157,14 +157,48 @@
       <div class="figure-body">
         <p class="figure-note">
           The headline index, one candle per session: the body spans open to close, the wick the
-          day's full range. Green closed up, red closed down. The IHSG is weighted by company
-          size, so a handful of the largest constituents move it — which is exactly what the
-          breadth panels below are here to check it against.
+          day's full range. Green closed up, red closed down. The IHSG weighs each company by the
+          value of its freely traded shares, so a handful of the largest constituents move it.
+          Beneath the chart, the ones that did — hover any session to read it. The breadth panels
+          below check them against everyone else.
         </p>
         <div class="breadth-frame">
           <canvas id="ihsg-chart"></canvas>
           <div class="bc-tip" id="ihsg-tip"></div>
         </div>
+      </div>
+
+      <!-- Who moved it: the session's move attributed to its constituents
+           (backend/scrapers/movers.js). Hidden until /api/movers answers. -->
+      <div class="movers" id="movers" hidden>
+        <div class="movers-head">
+          <span class="movers-kicker">Who Moved It</span>
+          <span class="movers-date" id="movers-date">—</span>
+          <span class="movers-move" id="movers-move"></span>
+          <span class="movers-step">
+            <button type="button" class="movers-btn" id="movers-prev" aria-label="Previous session">‹</button>
+            <button type="button" class="movers-btn" id="movers-next" aria-label="Next session">›</button>
+          </span>
+        </div>
+        <div class="movers-cols">
+          <div class="movers-col up">
+            <div class="movers-col-head">Lifted the index · points</div>
+            <ol class="movers-list" id="movers-up"></ol>
+          </div>
+          <div class="movers-col down">
+            <div class="movers-col-head">Dragged it · points</div>
+            <ol class="movers-list" id="movers-down"></ol>
+          </div>
+        </div>
+        <p class="movers-foot" id="movers-foot"></p>
+        <p class="movers-method">
+          An estimate: each stock's points are its weight going into the session times its own move.
+          The weights are rebuilt from Yahoo share counts and a public free-float table
+          (<span id="movers-float-asof">—</span>), not IDX's own figures, so they can miss the real
+          move by a few points — the gap is printed above. From 2 November 2026 the 81 stocks IDX
+          flags for concentrated ownership, BREN, DSSA and BYAN among them, no longer count toward
+          the index. Covers the last year of sessions.
+        </p>
       </div>
     </section>
 

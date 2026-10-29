@@ -59,12 +59,12 @@ async function getJSON(url) {
 }
 
 /** Annual fundamentals as { field: [{ date, value }] }, oldest first. */
-export async function fetchFundamentals(ticker) {
+export async function fetchFundamentals(ticker, fields = FIELDS) {
   const end = Math.floor(Date.now() / 1000);
   const start = end - (10 * 365 * 86400);
   const data = await getJSON(
     `${YAHOO_BASE}/ws/fundamentals-timeseries/v1/finance/timeseries/${encodeURIComponent(ticker)}` +
-    `?symbol=${encodeURIComponent(ticker)}&type=${FIELDS}&period1=${start}&period2=${end}&merge=false`
+    `?symbol=${encodeURIComponent(ticker)}&type=${fields}&period1=${start}&period2=${end}&merge=false`
   );
 
   const out = {};
@@ -84,6 +84,22 @@ export async function fetchFundamentals(ticker) {
       .sort((a, b) => a.date.localeCompare(b.date));
   }
   return out;
+}
+
+/**
+ * Every share count Yahoo still serves for a ticker, annual and quarterly
+ * merged, oldest first — what the index-movers estimate weights by (see
+ * scrapers/movers.js). [] on any failure: a ticker without a share count is
+ * left out of that estimate, it must never fail the breadth scrape it rides on.
+ */
+export async function fetchShareCounts(ticker) {
+  try {
+    const f = await fetchFundamentals(ticker, 'annualOrdinarySharesNumber,quarterlyOrdinarySharesNumber');
+    return [...(f.annualOrdinarySharesNumber || []), ...(f.quarterlyOrdinarySharesNumber || [])]
+      .sort((a, b) => a.date.localeCompare(b.date));
+  } catch {
+    return [];
+  }
 }
 
 /**

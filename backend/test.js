@@ -12,6 +12,8 @@ import { dcfPerShare, residualIncomePerShare, isFinancial, median, trailingTwelv
 import { parseRssItems, mergeHeadlines, wibDateString, filterToday } from './scrapers/news.js';
 import { parseScoreResponse } from './scrapers/sentiment.js';
 import { weeklyCloses, ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
+import { sharesOn, capWeights, computeMovers, moversHistoryStart } from './scrapers/movers.js';
+import { HSC_SCHEDULE, hscExcludedOn, FLOAT_OVERRIDES, floatOverrideOn } from './lib/ihsg-rules.js';
 
 // Helper: assert the A/D Line cumulative invariant (adLine is a genuine running
 // sum of spreads, never resets).
@@ -688,5 +690,195 @@ describe('summarizeMa200w — market-wide reading from per-ticker snapshots', ()
     strictEqual(s.universeCount, 0);
     strictEqual(s.pctNear, 0);
     strictEqual(s.pctBelow, 0);
+  });
+});
+
+// ── Index movers (movers.js + ihsg-rules.js) ──
+
+describe('sharesOn — share count in force on a date', () => {
+  const filings = [
+    { date: '2024-12-31', value: 100 },
+    { date: '2025-06-30', value: 120 }, // a rights issue
+  ];
+
+  test('takes the latest filing on or before the date', () => {
+    strictEqual(sharesOn(filings, '2025-03-01'), 100);
+    strictEqual(sharesOn(filings, '2025-06-30'), 120);
+    strictEqual(sharesOn(filings, '2026-01-01'), 120);
+  });
+
+  test('a date before the first filing takes that first filing', () => {
+    strictEqual(sharesOn(filings, '2023-01-01'), 100);
+  });
+
+  test('no filings yields null', () => {
+    strictEqual(sharesOn([], '2025-01-01'), null);
+    strictEqual(sharesOn(null, '2025-01-01'), null);
+  });
+});
+
+describe('capWeights — the 9% single-stock cap', () => {
+  const close = (a, b) => ok(Math.abs(a - b) < 1e-9, `${a} ≈ ${b}`);
+
+  test('the excess goes to the uncapped names pro rata', () => {
+    const w = capWeights([0.5, 0.3, 0.2], 0.4);
+    close(w[0], 0.4);
+    close(w[1], 0.36); // 0.3 + 0.1 × 0.3/0.5
+    close(w[2], 0.24);
+  });
+
+  test('repeats when the hand-out pushes another name over', () => {
+    // 0.6 → 0.4 hands 0.2 out; 0.35 grows to 0.525, over the cap in turn.
+    const w = capWeights([0.6, 0.35, 0.05], 0.4);
+    close(w[0], 0.4);
+    close(w[1], 0.4);
+    close(w[2], 0.2);
+    close(w.reduce((a, b) => a + b, 0), 1);
+  });
+
+  test('a cap no weighting could satisfy leaves the weights alone', () => {
+    const w = capWeights([0.5, 0.5], 0.09);
+    strictEqual(w[0], 0.5);
+  });
+});
+
+describe('computeMovers — attributing the index move', () => {
+  // A two-stock index with divisor 1, so its level IS its float market cap:
+  //   A: 100 shares × 50% float × 10 → 11 (+10%)   500 → 550
+  //   B: 200 shares × 100% float × 5 → 4.5 (−10%)  1000 → 900
+  // Index 1500 → 1450. A pushed it +50 points, B −100.
+  const index = [{ date: '2026-10-01', close: 1500 }, { date: '2026-10-02', close: 1450 }];
+  const tickers = [
+    { ticker: 'A', bars: [{ date: '2026-10-01', close: 10 }, { date: '2026-10-02', close: 11 }], shares: [{ date: '2025-12-31', value: 100 }] },
+    { ticker: 'B', bars: [{ date: '2026-10-01', close: 5 }, { date: '2026-10-02', close: 4.5 }], shares: [{ date: '2025-12-31', value: 200 }] },
+  ];
+  const opts = { freeFloat: { A: 0.5, B: 1 }, excludedOn: () => new Set(), floatOn: () => null, weightCap: 1 };
+
+  test('with the true weights, the points add up to the real move exactly', () => {
+    const [day] = computeMovers(index, tickers, opts);
+    strictEqual(day.date, '2026-10-02');
+    strictEqual(day.change, -50);
+    strictEqual(day.estimate, -50);
+    strictEqual(day.up[0].ticker, 'A');
+    strictEqual(day.up[0].pts, 50);
+    strictEqual(day.up[0].pct, 10);
+    strictEqual(day.down[0].ticker, 'B');
+    strictEqual(day.down[0].pts, -100);
+    strictEqual(day.rest, 0);
+    strictEqual(day.counted, 2);
+  });
+
+  test('free float decides the weight, not full market cap', () => {
+    // Full cap would weigh A at 1000 against B's 1000 and call it +75/−75.
+    const [day] = computeMovers(index, tickers, { ...opts, freeFloat: { A: 1, B: 1 } });
+    strictEqual(day.up[0].pts, 75);
+    strictEqual(day.down[0].pts, -75);
+  });
+
+  test('a dated float correction overrides the table from its own date', () => {
+    // A's correct float is 100%, not the table's 50%: weights 1000 vs 1000.
+    const [day] = computeMovers(index, tickers, { ...opts, floatOn: (t, d) => (t === 'A' && d >= '2026-10-01' ? 1 : null) });
+    strictEqual(day.up[0].pts, 75);
+    const [before] = computeMovers(index, tickers, { ...opts, floatOn: (t, d) => (t === 'A' && d >= '2026-10-02' ? 1 : null) });
+    strictEqual(before.up[0].pts, 50); // weights are set at the PREVIOUS close (10-01): not yet in force
+  });
+
+  test('an HSC stock counts for nothing from its effective date', () => {
+    const [day] = computeMovers(index, tickers, { ...opts, excludedOn: d => new Set(d >= '2026-10-02' ? ['B'] : []) });
+    strictEqual(day.counted, 1);
+    strictEqual(day.down.length, 0);
+    strictEqual(day.up[0].ticker, 'A');
+    strictEqual(day.up[0].pts, 150); // A is the whole index now: 1500 × 100% × +10%
+  });
+
+  test('a halted stock keeps its last close: in the weights, moving nothing', () => {
+    const halted = [tickers[0], { ...tickers[1], bars: [tickers[1].bars[0]] }];
+    const [day] = computeMovers(index, halted, opts);
+    strictEqual(day.counted, 2);
+    strictEqual(day.estimate, 50); // only A moved; B still holds two-thirds of the weight
+    strictEqual(day.down.length, 0);
+  });
+
+  test('a close older than 30 days is not carried forward', () => {
+    const idx = [{ date: '2026-10-01', close: 1500 }, { date: '2026-11-15', close: 1500 }];
+    const stale = [{ ticker: 'A', bars: [{ date: '2026-08-01', close: 10 }], shares: [{ date: '2025-12-31', value: 100 }] }];
+    strictEqual(computeMovers(idx, stale, opts).length, 0);
+  });
+
+  test('a ticker without a share count is left out, not guessed', () => {
+    const [day] = computeMovers(index, [tickers[0], { ...tickers[1], shares: [] }], opts);
+    strictEqual(day.counted, 1);
+  });
+
+  test('keeps only the last `sessions`, oldest first, with at most perSide a side', () => {
+    const many = Array.from({ length: 6 }, (_, i) => ({
+      ticker: 'T' + i,
+      bars: index.map((b, k) => ({ date: b.date, close: k ? 10 + i : 10 })),
+      shares: [{ date: '2025-01-01', value: 100 }],
+    }));
+    const longIndex = [{ date: '2026-09-30', close: 1500 }, ...index];
+    const days = computeMovers(longIndex, many, { ...opts, sessions: 1, perSide: 2, freeFloat: {}, defaultFloat: 1 });
+    strictEqual(days.length, 1);
+    strictEqual(days[0].date, '2026-10-02');
+    strictEqual(days[0].up.length, 2);
+    strictEqual(days[0].up[0].ticker, 'T5');
+    // Shown + rest always adds back to the estimate.
+    const shown = days[0].up.reduce((s, m) => s + m.pts, 0);
+    ok(Math.abs(shown + days[0].rest - days[0].estimate) < 0.02);
+  });
+});
+
+describe('moversHistoryStart — how much history the estimate needs', () => {
+  test('the session before the window, less the 30-day carry-forward', () => {
+    const bars = ['2026-10-01', '2026-10-02', '2026-10-05'].map(date => ({ date, close: 1 }));
+    strictEqual(moversHistoryStart(bars, 1), '2026-09-02'); // 2026-10-02 − 30 days
+    strictEqual(moversHistoryStart([], 1), null);
+  });
+});
+
+describe('hscExcludedOn — IHSG membership by date', () => {
+  test('nothing is excluded before the first review takes effect', () => {
+    strictEqual(hscExcludedOn('2026-10-30').size, 0);
+  });
+
+  test('BREN, DSSA and BYAN leave the index on 2026-11-02', () => {
+    const out = hscExcludedOn('2026-11-02');
+    ok(out.has('BREN') && out.has('DSSA') && out.has('BYAN'));
+    ok(!out.has('BBCA'));
+  });
+
+  test('a later review replaces the list rather than adding to it', () => {
+    const schedule = [{ from: '2026-11-02', tickers: ['X', 'Y'] }, { from: '2027-02-01', tickers: ['Y'] }];
+    strictEqual(hscExcludedOn('2026-12-01', schedule).has('X'), true);
+    strictEqual(hscExcludedOn('2027-02-01', schedule).has('X'), false);
+  });
+
+  test('the schedule is in date order with no duplicate codes', () => {
+    for (let i = 1; i < HSC_SCHEDULE.length; i++) ok(HSC_SCHEDULE[i - 1].from < HSC_SCHEDULE[i].from);
+    for (const { tickers } of HSC_SCHEDULE) strictEqual(new Set(tickers).size, tickers.length);
+  });
+});
+
+describe('floatOverrideOn — dated free-float corrections', () => {
+  test('applies from its date, falls back to the table before the first entry', () => {
+    const overrides = { X: [{ from: '2026-01-01', ratio: 0.1 }, { from: '2026-06-08', ratio: 0.25 }] };
+    strictEqual(floatOverrideOn('X', '2025-12-31', overrides), null);
+    strictEqual(floatOverrideOn('X', '2026-03-01', overrides), 0.1);
+    strictEqual(floatOverrideOn('X', '2026-06-08', overrides), 0.25);
+    strictEqual(floatOverrideOn('Y', '2026-06-08', overrides), null);
+  });
+
+  test('TPIA carries its June 2026 sell-down', () => {
+    strictEqual(floatOverrideOn('TPIA', '2026-03-06'), 0.109);
+    strictEqual(floatOverrideOn('TPIA', '2026-10-01'), 0.257);
+  });
+
+  test('every correction is in date order and a ratio in (0, 1]', () => {
+    for (const entries of Object.values(FLOAT_OVERRIDES)) {
+      for (let i = 0; i < entries.length; i++) {
+        ok(entries[i].ratio > 0 && entries[i].ratio <= 1);
+        if (i) ok(entries[i - 1].from < entries[i].from);
+      }
+    }
   });
 });

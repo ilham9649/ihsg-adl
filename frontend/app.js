@@ -173,7 +173,10 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('date-filter').addEventListener('input', debounce(() => renderTable(getFilteredData())));
   document.querySelectorAll('#ma-checklist input[type=checkbox]')
     .forEach(cb => cb.addEventListener('change', applyMaToggles));
+  document.getElementById('movers-prev').addEventListener('click', () => stepMovers(-1));
+  document.getElementById('movers-next').addEventListener('click', () => stepMovers(1));
   fetchData();
+  fetchMovers();
 });
 
 // Show/hide breadth lines from the checklist (unchecked → hidden key).
@@ -261,6 +264,7 @@ function renderAll() {
   HoverSync.reset();
   renderCards(data);
   renderPanels(data);
+  linkMovers(data);
   renderTable(data);
 }
 
@@ -327,6 +331,120 @@ function renderPanels(data) {
     linkBreadth(panels[id]);
   }
   applyMaToggles();
+}
+
+// ── Who moved it (Fig. I) ──
+// Each session's IHSG move attributed to its constituents, in index points.
+// Unlike every other figure on this page this is computed by the backend
+// (scrapers/movers.js): it needs share counts and free floats the browser
+// doesn't have. Fetched on its own, so the page never waits on it and the
+// block simply stays hidden if it isn't there.
+let movers = [];             // oldest first
+let moversByDate = new Map();
+let moverDate = null;        // the session on show
+
+const fmtPts = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1);
+const fmtPct = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1) + '%';
+const longDate = ds => new Date(ds + 'T00:00:00Z').toLocaleDateString('en-GB',
+  { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+async function fetchMovers() {
+  try {
+    const res = await fetch(`${API_BASE}/api/movers`);
+    const json = await res.json();
+    const payload = json.body && json.statusCode ? JSON.parse(json.body) : json;
+    if (!payload.success || !payload.data?.length) return;
+    movers = payload.data.slice().sort((a, b) => a.date.localeCompare(b.date));
+    moversByDate = new Map(movers.map(d => [d.date, d]));
+    document.getElementById('movers-float-asof').textContent =
+      payload.floatAsOf ? `as of ${payload.floatAsOf}` : 'date unknown';
+    document.getElementById('movers').hidden = false;
+    showMovers(movers[movers.length - 1].date);
+  } catch (err) {
+    console.error('Movers fetch error:', err);
+  }
+}
+
+// Follows the hover on any panel, and stays on the last session hovered when
+// the pointer leaves — moving down to read the list must not snap it back.
+function linkMovers(data) {
+  HoverSync.register({ show: (i) => { if (data[i]) showMovers(data[i].date); }, hide: () => {} });
+}
+
+// Where a session sits among the attributed ones: its own index, or halfway
+// between neighbours (x.5) when it has none — so the arrows still step out of
+// a session older than the window, or one the backend skipped.
+function moverPos(date) {
+  const i = movers.findIndex(d => d.date >= date);
+  if (i < 0) return movers.length - 0.5;
+  return movers[i].date === date ? i : i - 0.5;
+}
+
+function stepMovers(dir) {
+  const pos = moverPos(moverDate);
+  const target = dir < 0 ? movers[Math.ceil(pos) - 1] : movers[Math.floor(pos) + 1];
+  if (target) showMovers(target.date);
+}
+
+function moverItem(m, scale) {
+  const li = document.createElement('li');
+  li.title = `${m.ticker} moved ${fmtPct(m.pct)}, worth ${fmtPts(m.pts)} index points`;
+  const span = (cls, text) => {
+    const el = document.createElement('span');
+    el.className = cls;
+    if (text != null) el.textContent = text;
+    return el;
+  };
+  const bar = span('mv-bar');
+  const fill = document.createElement('i');
+  fill.style.width = (Math.abs(m.pts) / scale * 100).toFixed(1) + '%';
+  bar.appendChild(fill);
+  li.append(span('mv-code', m.ticker), bar, span('mv-pts', fmtPts(m.pts)), span('mv-pct', fmtPct(m.pct)));
+  return li;
+}
+
+// Built from DOM nodes, never innerHTML — the codes come from the backend.
+function fillMovers(listId, rows, scale, emptyText) {
+  const list = document.getElementById(listId);
+  if (!rows.length) {
+    const li = document.createElement('li');
+    li.className = 'movers-empty';
+    li.textContent = emptyText;
+    list.replaceChildren(li);
+    return;
+  }
+  list.replaceChildren(...rows.map(m => moverItem(m, scale)));
+}
+
+function showMovers(date) {
+  if (!movers.length || date === moverDate) return;
+  moverDate = date;
+  const day = moversByDate.get(date);
+  const pos = moverPos(date);
+  document.getElementById('movers-prev').disabled = !movers[Math.ceil(pos) - 1];
+  document.getElementById('movers-next').disabled = !movers[Math.floor(pos) + 1];
+  document.getElementById('movers-date').textContent = longDate(date);
+
+  const move = document.getElementById('movers-move');
+  const foot = document.getElementById('movers-foot');
+  if (!day) {
+    move.textContent = '';
+    fillMovers('movers-up', [], 1, '—');
+    fillMovers('movers-down', [], 1, '—');
+    foot.textContent = date < movers[0].date
+      ? `No attribution this far back: it covers the last ${movers.length} sessions, from ${longDate(movers[0].date)}.`
+      : 'No attribution on record for this session.';
+    return;
+  }
+
+  move.textContent = `IHSG ${fmtPts(day.change)} pts (${fmtPct(day.pct)})`;
+  move.className = 'movers-move ' + (day.change >= 0 ? 'up' : 'down');
+  const scale = Math.max(...day.up.concat(day.down).map(m => Math.abs(m.pts)), 0) || 1;
+  fillMovers('movers-up', day.up, scale, 'Nothing lifted it.');
+  fillMovers('movers-down', day.down, scale, 'Nothing dragged it.');
+  const others = day.counted - day.up.length - day.down.length;
+  foot.textContent = `The other ${others.toLocaleString('en-US')} stocks, net: ${fmtPts(day.rest)} pts. ` +
+    `All together these weights come to ${fmtPts(day.estimate)}, against the real ${fmtPts(day.change)}.`;
 }
 
 // ── Cards ──

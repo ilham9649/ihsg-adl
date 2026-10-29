@@ -279,6 +279,39 @@ export async function getMa200wSnapshot() {
   };
 }
 
+// ── Index movers ──
+// One item, like Valuation: the whole trailing year of per-session
+// attributions (scrapers/movers.js) is recomputed on every breadth refresh and
+// read whole. ~252 sessions × 10 movers ≈ 130KB against DynamoDB's 400KB item
+// limit — a window much past two years needs one item per day instead.
+const MOVERS_KEY = '_movers';
+
+export async function putMovers(days, floatAsOf) {
+  await client.send(new PutItemCommand({
+    TableName: TABLE_NAME,
+    Item: {
+      date: { S: MOVERS_KEY },
+      updatedAt: { S: new Date().toISOString() },
+      // Which free-float table the weights came from, so the page can say so.
+      floatAsOf: { S: floatAsOf || '' },
+      rows: { S: JSON.stringify(days) },
+    },
+  }));
+}
+
+export async function getMovers() {
+  const result = await client.send(new GetItemCommand({
+    TableName: TABLE_NAME,
+    Key: { date: { S: MOVERS_KEY } },
+  }));
+  if (!result.Item?.rows?.S) return { updatedAt: null, floatAsOf: null, rows: [] };
+  return {
+    updatedAt: result.Item.updatedAt?.S || null,
+    floatAsOf: result.Item.floatAsOf?.S || null,
+    rows: JSON.parse(result.Item.rows.S),
+  };
+}
+
 // ── Generic short-lived lock (TTL-gated conditional PutItem) ──
 // Same primitive serves two different jobs: a mutex (block a second run while
 // one is in flight) and a cooldown (block rapid repeats even sequentially).
