@@ -2,7 +2,7 @@
 // IHSG methodology inputs we curate by hand (used by scrapers/movers.js)
 // ──────────────────────────────────────────────
 // Two things no free endpoint serves: which stocks IDX leaves out of the
-// index, and free floats where the generated table (lib/freefloat.js) is
+// index, and free floats where the scraped snapshots (scrapers/freefloat.js) are
 // wrong. Both are dated, because both change, and a past session must be
 // weighted the way it actually was.
 
@@ -48,7 +48,7 @@ export function hscExcludedOn(date, schedule = HSC_SCHEDULE) {
 }
 
 // ── Free-float corrections ──
-// The generated table is one snapshot from one source, and the daily
+// The snapshots come from one third-party source, and the daily
 // estimate's miss shows where it is wrong: regressing each session's miss on
 // each heavyweight's estimated points (2025-10 → 2026-10) singled out two
 // names far outside noise — TPIA weighted ×2.2 too heavy (t = 13), BRMS ×3.2
@@ -56,7 +56,9 @@ export function hscExcludedOn(date, schedule = HSC_SCHEDULE) {
 // name only with a source; never tune a number to shrink the miss.
 //
 // Entries are dated like the HSC list: the latest `from` on or before the
-// session applies; before the first, the generated table does.
+// session applies; before the first, the float snapshots do. An override wins
+// over every snapshot, so once the monthly snapshots get a code right, end its
+// override with a `{ from, ratio: null }` step to hand it back to them.
 export const FLOAT_OVERRIDES = {
   // 10.9% until SCG Chemicals sold down on 2026-06-08, 25.7% after (company
   // disclosure, reported by CNBC Indonesia and Kontan). The table's 29% is the
@@ -72,7 +74,7 @@ export const FLOAT_OVERRIDES = {
   ],
 };
 
-/** The corrected free-float ratio for `ticker` on `date`, or null to use the generated table. */
+/** The corrected free-float ratio for `ticker` on `date`, or null to use the float snapshots. */
 export function floatOverrideOn(ticker, date, overrides = FLOAT_OVERRIDES) {
   let ratio = null;
   for (const entry of overrides[ticker] || []) if (entry.from <= date) ratio = entry.ratio;

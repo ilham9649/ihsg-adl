@@ -12,7 +12,8 @@ import { dcfPerShare, residualIncomePerShare, isFinancial, median, trailingTwelv
 import { parseRssItems, mergeHeadlines, wibDateString, filterToday } from './scrapers/news.js';
 import { parseScoreResponse } from './scrapers/sentiment.js';
 import { weeklyCloses, ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
-import { sharesOn, capWeights, computeMovers, moversHistoryStart } from './scrapers/movers.js';
+import { valueOn, capWeights, computeMovers, moversHistoryStart } from './scrapers/movers.js';
+import { parseStat, buildFloatSnapshot, MIN_COVERAGE } from './scrapers/freefloat.js';
 import { HSC_SCHEDULE, hscExcludedOn, FLOAT_OVERRIDES, floatOverrideOn } from './lib/ihsg-rules.js';
 
 // Helper: assert the A/D Line cumulative invariant (adLine is a genuine running
@@ -695,25 +696,25 @@ describe('summarizeMa200w — market-wide reading from per-ticker snapshots', ()
 
 // ── Index movers (movers.js + ihsg-rules.js) ──
 
-describe('sharesOn — share count in force on a date', () => {
+describe('valueOn — the figure in force on a date (share filings, float snapshots)', () => {
   const filings = [
     { date: '2024-12-31', value: 100 },
     { date: '2025-06-30', value: 120 }, // a rights issue
   ];
 
   test('takes the latest filing on or before the date', () => {
-    strictEqual(sharesOn(filings, '2025-03-01'), 100);
-    strictEqual(sharesOn(filings, '2025-06-30'), 120);
-    strictEqual(sharesOn(filings, '2026-01-01'), 120);
+    strictEqual(valueOn(filings, '2025-03-01'), 100);
+    strictEqual(valueOn(filings, '2025-06-30'), 120);
+    strictEqual(valueOn(filings, '2026-01-01'), 120);
   });
 
   test('a date before the first filing takes that first filing', () => {
-    strictEqual(sharesOn(filings, '2023-01-01'), 100);
+    strictEqual(valueOn(filings, '2023-01-01'), 100);
   });
 
   test('no filings yields null', () => {
-    strictEqual(sharesOn([], '2025-01-01'), null);
-    strictEqual(sharesOn(null, '2025-01-01'), null);
+    strictEqual(valueOn([], '2025-01-01'), null);
+    strictEqual(valueOn(null, '2025-01-01'), null);
   });
 });
 
@@ -752,7 +753,8 @@ describe('computeMovers — attributing the index move', () => {
     { ticker: 'A', bars: [{ date: '2026-10-01', close: 10 }, { date: '2026-10-02', close: 11 }], shares: [{ date: '2025-12-31', value: 100 }] },
     { ticker: 'B', bars: [{ date: '2026-10-01', close: 5 }, { date: '2026-10-02', close: 4.5 }], shares: [{ date: '2025-12-31', value: 200 }] },
   ];
-  const opts = { freeFloat: { A: 0.5, B: 1 }, excludedOn: () => new Set(), floatOn: () => null, weightCap: 1 };
+  const floats = (date, f) => ({ date, floats: f });
+  const opts = { floatSnapshots: [floats('2026-01-01', { A: 0.5, B: 1 })], excludedOn: () => new Set(), floatOn: () => null, weightCap: 1 };
 
   test('with the true weights, the points add up to the real move exactly', () => {
     const [day] = computeMovers(index, tickers, opts);
@@ -770,9 +772,33 @@ describe('computeMovers — attributing the index move', () => {
 
   test('free float decides the weight, not full market cap', () => {
     // Full cap would weigh A at 1000 against B's 1000 and call it +75/−75.
-    const [day] = computeMovers(index, tickers, { ...opts, freeFloat: { A: 1, B: 1 } });
+    const [day] = computeMovers(index, tickers, { ...opts, floatSnapshots: [floats('2026-01-01', { A: 1, B: 1 })] });
     strictEqual(day.up[0].pts, 75);
     strictEqual(day.down[0].pts, -75);
+  });
+
+  test('a newer float snapshot applies from its own date, not before', () => {
+    // A's float goes 50% → 100% in a snapshot dated 2026-10-01 (the weights' date).
+    const later = [floats('2026-01-01', { A: 0.5, B: 1 }), floats('2026-10-01', { A: 1, B: 1 })];
+    strictEqual(computeMovers(index, tickers, { ...opts, floatSnapshots: later })[0].up[0].pts, 75);
+    const tooLate = [floats('2026-01-01', { A: 0.5, B: 1 }), floats('2026-10-02', { A: 1, B: 1 })];
+    strictEqual(computeMovers(index, tickers, { ...opts, floatSnapshots: tooLate })[0].up[0].pts, 50);
+  });
+
+  test('sessions before the first snapshot take the earliest one', () => {
+    const [day] = computeMovers(index, tickers, { ...opts, floatSnapshots: [floats('2026-12-01', { A: 0.5, B: 1 })] });
+    strictEqual(day.up[0].pts, 50);
+  });
+
+  test('a code missing from a newer, partial snapshot keeps its last float', () => {
+    const partial = [floats('2026-01-01', { A: 0.5, B: 1 }), floats('2026-09-01', { B: 1 })];
+    strictEqual(computeMovers(index, tickers, { ...opts, floatSnapshots: partial })[0].up[0].pts, 50);
+  });
+
+  test('a code in no snapshot takes the newest snapshot\'s median', () => {
+    // Median of { B: 1, C: 1, D: 0.5 } is 1: A weighs 100 × 1 × 10 = 1000, as B does.
+    const [day] = computeMovers(index, tickers, { ...opts, floatSnapshots: [floats('2026-01-01', { B: 1, C: 1, D: 0.5 })] });
+    strictEqual(day.up[0].pts, 75);
   });
 
   test('a dated float correction overrides the table from its own date', () => {
@@ -817,7 +843,7 @@ describe('computeMovers — attributing the index move', () => {
       shares: [{ date: '2025-01-01', value: 100 }],
     }));
     const longIndex = [{ date: '2026-09-30', close: 1500 }, ...index];
-    const days = computeMovers(longIndex, many, { ...opts, sessions: 1, perSide: 2, freeFloat: {}, defaultFloat: 1 });
+    const days = computeMovers(longIndex, many, { ...opts, sessions: 1, perSide: 2, floatSnapshots: [floats('2025-01-01', {})] });
     strictEqual(days.length, 1);
     strictEqual(days[0].date, '2026-10-02');
     strictEqual(days[0].up.length, 2);
@@ -873,12 +899,63 @@ describe('floatOverrideOn — dated free-float corrections', () => {
     strictEqual(floatOverrideOn('TPIA', '2026-10-01'), 0.257);
   });
 
-  test('every correction is in date order and a ratio in (0, 1]', () => {
+  test('a null step hands the code back to the snapshots', () => {
+    const overrides = { X: [{ from: '2026-01-01', ratio: 0.1 }, { from: '2026-12-01', ratio: null }] };
+    strictEqual(floatOverrideOn('X', '2026-06-01', overrides), 0.1);
+    strictEqual(floatOverrideOn('X', '2026-12-01', overrides), null);
+  });
+
+  test('every correction is in date order and a ratio in (0, 1], or null', () => {
     for (const entries of Object.values(FLOAT_OVERRIDES)) {
       for (let i = 0; i < entries.length; i++) {
-        ok(entries[i].ratio > 0 && entries[i].ratio <= 1);
+        ok(entries[i].ratio === null || (entries[i].ratio > 0 && entries[i].ratio <= 1));
         if (i) ok(entries[i - 1].from < entries[i].from);
       }
     }
+  });
+});
+
+describe('parseStat — reading a stockanalysis statistics page', () => {
+  const html = 'x{id:"sharesout",title:"Shares Outstanding",value:"122.84B",hover:"122,841,751,300"},' +
+    '{id:"float",title:"Float",value:"48.61B",hover:"48,610,141,397"},{id:"shortFloat",title:"Short % of Float",value:"n/a",hover:"n/a"}';
+
+  test('reads the unabbreviated figure', () => {
+    strictEqual(parseStat(html, 'float'), 48610141397);
+    strictEqual(parseStat(html, 'sharesout'), 122841751300);
+  });
+
+  test('n/a or a missing statistic is null, not 0', () => {
+    strictEqual(parseStat(html, 'shortFloat'), null);
+    strictEqual(parseStat(html, 'employees'), null);
+  });
+});
+
+describe('buildFloatSnapshot — one run of the monthly job', () => {
+  const run = (codes, ratios) => buildFloatSnapshot(codes, { fetchRatio: async c => ratios[c] ?? null, delayMs: 0 });
+
+  test('rounds to 0.1%, caps at 100%, and skips codes without a figure', async () => {
+    const snap = await run(['A', 'B', 'C'], { A: 0.39571, B: 1.2 });
+    strictEqual(snap.floats.A, 0.396);
+    strictEqual(snap.floats.B, 1);
+    ok(!('C' in snap.floats));
+    strictEqual(snap.count, 2);
+    strictEqual(snap.attempted, 3);
+  });
+
+  test('a code whose fetch throws is skipped, not fatal', async () => {
+    const snap = await buildFloatSnapshot(['A', 'B'], {
+      fetchRatio: async c => { if (c === 'A') throw new Error('timeout'); return 0.5; },
+      delayMs: 0,
+    });
+    strictEqual(snap.count, 1);
+  });
+
+  test('too few answers is not worth storing — a blocked run must not become a snapshot', async () => {
+    const codes = Array.from({ length: 10 }, (_, i) => 'T' + i);
+    const ratios = Object.fromEntries(codes.slice(0, Math.ceil(MIN_COVERAGE * 10) - 1).map(c => [c, 0.3]));
+    strictEqual((await run(codes, ratios)).usable, false);
+    ratios[codes[9]] = 0.3;
+    strictEqual((await run(codes, ratios)).usable, true);
+    strictEqual((await run([], {})).usable, false);
   });
 });

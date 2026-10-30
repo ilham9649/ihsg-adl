@@ -2,15 +2,15 @@
 // Lambda Handler (supports REST API v1 & HTTP API v2)
 // ──────────────────────────────────────────────
 
-import { getAllTickers } from './lib/tickers.js';
+import { getAllTickers, IDX_TICKERS } from './lib/tickers.js';
 import { fetchChart, fetchQuotes, computeSeries, isStaleComparison } from './scrapers/yahoo.js';
 import { buildValuations, fetchShareCounts } from './scrapers/valuation.js';
 import { fetchHeadlines, filterToday, wibDateString } from './scrapers/news.js';
 import { scoreSentiment } from './scrapers/sentiment.js';
 import { ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
-import { computeMovers, moversHistoryStart } from './scrapers/movers.js';
-import { FREE_FLOAT_AS_OF } from './lib/freefloat.js';
-import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, putMovers, getMovers, acquireRefreshLock, releaseRefreshLock, acquireValuationLock, releaseValuationLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
+import { computeMovers, moversHistoryStart, BASELINE_FLOATS } from './scrapers/movers.js';
+import { buildFloatSnapshot } from './scrapers/freefloat.js';
+import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, putMovers, getMovers, putFloatSnapshot, getFloatSnapshots, acquireRefreshLock, releaseRefreshLock, acquireValuationLock, releaseValuationLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
 
 const BASE_HEADERS = {
   'Content-Type': 'application/json',
@@ -204,13 +204,15 @@ async function refreshData() {
     }
 
     // Logged, not thrown: the movers lean on inputs breadth doesn't (share
-    // counts, the free-float table), and the breadth series above is already
-    // written — a failure here must not report the whole refresh as failed.
+    // counts, the free-float snapshots), and the breadth series above is
+    // already written — a failure here must not report the whole refresh as failed.
     let moverDays = 0;
     try {
-      const movers = computeMovers(indexBars, moverInputs);
+      const floatSnapshots = [BASELINE_FLOATS, ...await getFloatSnapshots()];
+      const movers = computeMovers(indexBars, moverInputs, { floatSnapshots });
       if (movers.length > 0) {
-        await putMovers(movers, FREE_FLOAT_AS_OF);
+        const floatAsOf = floatSnapshots.map(snap => snap.date).sort().pop();
+        await putMovers(movers, floatAsOf);
         moverDays = movers.length;
       }
     } catch (err) {
@@ -268,6 +270,25 @@ async function refreshValuations() {
   }
 }
 
+// Free floats change on corporate events (a sell-down, a placement), not with
+// the tape, so this runs on its own monthly trigger — `job: "freefloat"` — and
+// never inside the daily breadth scrape: ~960 pages takes ~6 minutes. Each run
+// adds a dated snapshot; the movers estimate picks the one in force per session.
+// No lock: two overlapping runs would write the same dated item twice.
+async function refreshFreeFloat() {
+  console.log(`Fetching free floats for ${IDX_TICKERS.length} codes`);
+  const { floats, count, attempted, usable } = await buildFloatSnapshot(IDX_TICKERS);
+  if (!usable) {
+    console.error(`Free floats: only ${count} of ${attempted} codes answered — snapshot not stored`);
+    return { success: false, message: `Only ${count} of ${attempted} codes returned a float — not stored`, floats: count, attempted };
+  }
+
+  const date = wibDateString();
+  await putFloatSnapshot({ date, floats, attempted });
+  console.log(`Free floats complete: ${date}, ${count} of ${attempted} codes`);
+  return { success: true, message: 'Refreshed free floats', date, floats: count, attempted };
+}
+
 // Market-wide only (not per-ticker), and its own trigger like valuation. Unlike
 // the free Yahoo-only jobs, each run is a billed LLM call behind a public POST
 // route with no auth — acquireSentimentCooldown guards against that being spammed.
@@ -321,6 +342,11 @@ export const handler = async (event) => {
       if (event.job === 'sentiment') {
         console.log('Scheduled sentiment triggered');
         const result = await refreshSentiment();
+        return { statusCode: 200, body: JSON.stringify(result) };
+      }
+      if (event.job === 'freefloat') {
+        console.log('Scheduled free-float refresh triggered');
+        const result = await refreshFreeFloat();
         return { statusCode: 200, body: JSON.stringify(result) };
       }
       console.log('Scheduled refresh triggered');
@@ -378,6 +404,14 @@ export const handler = async (event) => {
         count: snapshot.rows.length,
         data: snapshot.rows,
       }, { cacheable: true });
+    }
+
+    // ~6 minutes, so through API Gateway this returns 504 at 29s while the
+    // Lambda finishes and stores the snapshot — the same as valuation.
+    if (method === 'POST' && (path === '/api/freefloat/refresh' || path === '/api/freefloat/refresh/')) {
+      if (!isRefreshAuthorized(event)) return response(401, { error: 'Unauthorized' });
+      const result = await refreshFreeFloat();
+      return response(200, result);
     }
 
     // Rides along with /api/ad/refresh like the 200-week page — no refresh route.

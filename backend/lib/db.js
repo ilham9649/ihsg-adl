@@ -312,6 +312,46 @@ export async function getMovers() {
   };
 }
 
+// ── Free-float snapshots ──
+// One item PER RUN of the monthly freefloat job (`ff#YYYY-MM-DD`, same prefix
+// scheme as Sentiment), each holding the whole listing's ratios as JSON
+// (~12KB). Kept forever: together they are the dated float history the
+// index-movers estimate weights past sessions by.
+const FLOAT_PREFIX = 'ff#';
+
+export async function putFloatSnapshot({ date, floats, attempted }) {
+  await client.send(new PutItemCommand({
+    TableName: TABLE_NAME,
+    Item: {
+      date: { S: `${FLOAT_PREFIX}${date}` },
+      day: { S: date },
+      attempted: { N: String(attempted) },
+      floats: { S: JSON.stringify(floats) },
+      updatedAt: { S: new Date().toISOString() },
+    },
+  }));
+}
+
+export async function getFloatSnapshots() {
+  const items = [];
+  let lastEvaluatedKey;
+  do {
+    const result = await client.send(new ScanCommand({
+      TableName: TABLE_NAME,
+      FilterExpression: 'begins_with(#d, :p)',
+      ExpressionAttributeNames: { '#d': 'date' },
+      ExpressionAttributeValues: { ':p': { S: FLOAT_PREFIX } },
+      ExclusiveStartKey: lastEvaluatedKey,
+    }));
+    items.push(...(result.Items || []));
+    lastEvaluatedKey = result.LastEvaluatedKey;
+  } while (lastEvaluatedKey);
+
+  return items
+    .map(item => ({ date: item.day.S, floats: JSON.parse(item.floats.S) }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
 // ── Generic short-lived lock (TTL-gated conditional PutItem) ──
 // Same primitive serves two different jobs: a mutex (block a second run while
 // one is in flight) and a cooldown (block rapid repeats even sequentially).

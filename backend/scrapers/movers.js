@@ -12,10 +12,11 @@
 //
 // and the points across the constituents add up to the day's move — as far as
 // our weights match IDX's. They are an ESTIMATE rebuilt from public data:
-// Yahoo share counts, a free-float table (lib/freefloat.js) with dated
-// corrections, and IDX's HSC exclusion list (both in lib/ihsg-rules.js).
-// Every day carries its estimated total beside
-// the real move, so the gap is on the record rather than hidden.
+// Yahoo share counts, dated free-float snapshots (the monthly freefloat job,
+// over the frozen lib/freefloat.js baseline) with dated corrections, and IDX's
+// HSC exclusion list (both in lib/ihsg-rules.js). Every day carries its
+// estimated total beside the real move, so the gap is on the record rather
+// than hidden.
 //
 // Free float is not optional. Over 2025-09 → 2026-10, full market-cap weights
 // missed the real daily move by 14 points on average and told the wrong story
@@ -29,31 +30,37 @@
 // split-adjusted, which is right: IDX re-bases the divisor on a split.
 
 import { isStaleComparison, MAX_BAR_GAP_DAYS } from './yahoo.js';
-import { FREE_FLOAT } from '../lib/freefloat.js';
+import { FREE_FLOAT, FREE_FLOAT_AS_OF } from '../lib/freefloat.js';
 import { hscExcludedOn, floatOverrideOn } from '../lib/ihsg-rules.js';
 
 export const MOVERS_SESSIONS = 252; // one trading year — the window the estimate was checked over
 export const MOVERS_PER_SIDE = 5;
 export const WEIGHT_CAP = 0.09;     // IDX caps any one constituent at 9% of the index
 
-// A code missing from the table takes the median ratio. Those are almost all
-// small names whose weight rounds to nothing either way.
-export const DEFAULT_FREE_FLOAT = (() => {
-  const v = Object.values(FREE_FLOAT).sort((a, b) => a - b);
+// The oldest float snapshot, committed in the repo. The monthly job's
+// snapshots (DynamoDB, ff#YYYY-MM-DD) are laid over it by date; until one
+// exists, this is all there is.
+export const BASELINE_FLOATS = { date: FREE_FLOAT_AS_OF, floats: FREE_FLOAT };
+
+// A code no snapshot covers takes the median ratio of the newest one. Those are
+// almost all small names whose weight rounds to nothing either way.
+function medianRatio(floats) {
+  const v = Object.values(floats || {}).sort((a, b) => a - b);
   return v.length ? v[Math.floor(v.length / 2)] : 0.25;
-})();
+}
 
 const round2 = v => Math.round(v * 100) / 100;
 
 /**
- * Shares outstanding on `date`, from filings sorted oldest first: the latest
- * filing on or before it. A date before the first filing Yahoo still serves
- * takes that first filing — the nearest figure there is.
+ * The figure in force on `date`, from a dated series sorted oldest first —
+ * share filings, or one code's float snapshots: the latest entry on or before
+ * it. A date before the first entry takes that first entry, the nearest figure
+ * there is.
  */
-export function sharesOn(filings, date) {
-  if (!filings?.length) return null;
-  let value = filings[0].value;
-  for (const f of filings) {
+export function valueOn(series, date) {
+  if (!series?.length) return null;
+  let value = series[0].value;
+  for (const f of series) {
     if (f.date > date) break;
     value = f.value;
   }
@@ -113,6 +120,9 @@ export function moversHistoryStart(indexBars, sessions = MOVERS_SESSIONS) {
  *
  * indexBars: [{ date, close }] ascending — the IHSG itself, also the calendar.
  * tickers:   [{ ticker, bars: [{ date, close }] ascending, shares: [{ date, value }] ascending }]
+ * floatSnapshots: [{ date, floats: { code: ratio } }], any order. A code keeps
+ *   its float from the latest snapshot that has it, so a partial snapshot
+ *   doesn't drop anyone.
  *
  * Returns, oldest first:
  *   { date, change, pct, estimate, up, down, rest, counted }
@@ -123,8 +133,7 @@ export function moversHistoryStart(indexBars, sessions = MOVERS_SESSIONS) {
 export function computeMovers(indexBars, tickers, {
   sessions = MOVERS_SESSIONS,
   perSide = MOVERS_PER_SIDE,
-  freeFloat = FREE_FLOAT,
-  defaultFloat = DEFAULT_FREE_FLOAT,
+  floatSnapshots = [BASELINE_FLOATS],
   excludedOn = hscExcludedOn,
   floatOn = floatOverrideOn,
   weightCap = WEIGHT_CAP,
@@ -132,11 +141,15 @@ export function computeMovers(indexBars, tickers, {
   const cal = indexBars.filter(b => b.close > 0).slice(-(sessions + 1));
   if (cal.length < 2) return [];
 
+  const snapshots = floatSnapshots.slice().sort((a, b) => a.date.localeCompare(b.date));
+  const defaultFloat = medianRatio(snapshots[snapshots.length - 1]?.floats);
   const series = tickers.map(t => ({
     ticker: t.ticker,
     px: alignCloses(t.bars, cal),
     shares: t.shares,
-    float: freeFloat[t.ticker] ?? defaultFloat,
+    floats: snapshots
+      .filter(snap => snap.floats[t.ticker] != null)
+      .map(snap => ({ date: snap.date, value: snap.floats[t.ticker] })),
   }));
 
   const days = [];
@@ -149,9 +162,11 @@ export function computeMovers(indexBars, tickers, {
     for (const s of series) {
       const p0 = s.px[k - 1], p1 = s.px[k];
       if (!(p0 > 0) || !(p1 > 0) || excluded.has(s.ticker)) continue;
-      const shares = sharesOn(s.shares, cal[k - 1].date);
+      const asOf = cal[k - 1].date;
+      const shares = valueOn(s.shares, asOf);
       if (!(shares > 0)) continue;
-      const cap = shares * (floatOn(s.ticker, cal[k - 1].date) ?? s.float) * p0;
+      const float = floatOn(s.ticker, asOf) ?? valueOn(s.floats, asOf) ?? defaultFloat;
+      const cap = shares * float * p0;
       rows.push({ ticker: s.ticker, cap, ret: p1 / p0 - 1 });
       total += cap;
     }
