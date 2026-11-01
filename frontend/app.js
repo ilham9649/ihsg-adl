@@ -178,6 +178,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('movers-day').addEventListener('change', e => pickDay(e.target.value));
   document.getElementById('movers-mode-day').addEventListener('click', () => setMoversMode('day'));
   document.getElementById('movers-mode-range').addEventListener('click', () => setMoversMode('range'));
+  document.getElementById('movers-more').addEventListener('click', toggleMoversLimit);
   for (const id of ['movers-from', 'movers-to']) {
     document.getElementById(id).addEventListener('change', loadRange);
   }
@@ -350,6 +351,15 @@ let moversByDate = new Map();
 let moverDate = null;        // the session on show in day mode
 let moversMode = 'day';      // 'day' | 'range'
 let rangeRequest = 0;        // only the latest range request may render
+// Five a side by default; "Show 20" expands. The page's own data holds each
+// session's top five only (`_movers` would pass DynamoDB's 400KB item limit at
+// twenty), so an expanded day is read from the per-day endpoint, which has
+// every stock: GET /api/movers/{date}/{date}.
+const MOVERS_SHORT = 5, MOVERS_LONG = 20;
+let moversLimit = MOVERS_SHORT;
+let lastMovers = null;       // the view on show, re-cut when the limit changes
+const fullDays = new Map();  // date → that session's top twenty, fetched once
+let dayRequest = 0;         // only the latest expanded-day request may render
 
 const fmtPts = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1);
 const fmtPct = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1) + '%';
@@ -447,7 +457,17 @@ function fillMovers(listId, rows, scale, emptyText) {
 
 // One renderer for a session and a range: the title, the IHSG's real move,
 // the lifters and draggers, and the line that keeps the estimate honest.
-function renderMovers({ title, change, pct, up, down, rest, estimate, counted, note = '' }) {
+function renderMovers(view) {
+  lastMovers = view;
+  const { title, change, pct, estimate, counted, note = '' } = view;
+  const up = view.up.slice(0, moversLimit);
+  const down = view.down.slice(0, moversLimit);
+  // Whatever isn't listed is "the other stocks" — including names the server
+  // sent but the short list hides — so the net is recomputed from what shows.
+  const rest = estimate - up.concat(down).reduce((sum, m) => sum + m.pts, 0);
+  const more = document.getElementById('movers-more');
+  more.hidden = Math.max(view.up.length, view.down.length) <= MOVERS_SHORT && moversLimit === MOVERS_SHORT && !view.short;
+  more.textContent = moversLimit === MOVERS_SHORT ? `Show ${MOVERS_LONG}` : `Show ${MOVERS_SHORT}`;
   document.getElementById('movers-date').textContent = title;
   const move = document.getElementById('movers-move');
   move.textContent = `IHSG ${fmtPts(change)} pts (${fmtPct(pct)})`;
@@ -462,6 +482,8 @@ function renderMovers({ title, change, pct, up, down, rest, estimate, counted, n
 }
 
 function renderMoversEmpty(title, message) {
+  lastMovers = null;
+  document.getElementById('movers-more').hidden = true;
   document.getElementById('movers-date').textContent = title;
   document.getElementById('movers-move').textContent = '';
   fillMovers('movers-up', [], 1, '—');
@@ -484,7 +506,41 @@ function showMovers(date, { force = false, note = '' } = {}) {
       : 'No attribution on record for this session.');
     return;
   }
-  renderMovers({ ...day, title: longDate(date), note });
+  // `short`: this view holds only the stored top five — the toggle stays
+  // offered, since an expanded day is fetched rather than sliced.
+  renderMovers({ ...day, title: longDate(date), note, short: true });
+  if (moversLimit === MOVERS_LONG) loadFullDay(date, note);
+}
+
+// The expanded day: its top twenty from the per-day endpoint, cached per date.
+// The short list stays on screen until it arrives, and a pause before fetching
+// keeps a hover sweep across the chart from firing a request per candle.
+async function loadFullDay(date, note) {
+  const request = ++dayRequest;
+  let view = fullDays.get(date);
+  if (!view) {
+    await new Promise(r => setTimeout(r, 200));
+    if (request !== dayRequest) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/movers/${date}/${date}`);
+      const json = await res.json();
+      const payload = json.body && json.statusCode ? JSON.parse(json.body) : json;
+      if (!payload.success) return;
+      view = payload;
+      fullDays.set(date, view);
+    } catch (err) {
+      console.error('Movers day error:', err);
+      return;
+    }
+  }
+  if (request !== dayRequest || moversMode !== 'day' || moverDate !== date || moversLimit !== MOVERS_LONG) return;
+  renderMovers({ ...view, title: longDate(date), note });
+}
+
+function toggleMoversLimit() {
+  moversLimit = moversLimit === MOVERS_SHORT ? MOVERS_LONG : MOVERS_SHORT;
+  if (moversMode === 'day') showMovers(moverDate, { force: true });
+  else if (lastMovers) renderMovers(lastMovers);
 }
 
 function setMoversMode(mode) {
