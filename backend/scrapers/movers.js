@@ -35,7 +35,7 @@ import { hscExcludedOn, floatOverrideOn } from '../lib/ihsg-rules.js';
 
 export const MOVERS_SESSIONS = 252; // one trading year — the window the estimate was checked over
 export const MOVERS_PER_SIDE = 5;
-export const RANGE_PER_SIDE = 10;   // a range spreads the move over more names, so it lists more
+export const RANGE_PER_SIDE = 20;   // the page shows 5 and expands to 20, for a range or one day
 export const WEIGHT_CAP = 0.09;     // IDX caps any one constituent at 9% of the index
 
 // The oldest float snapshot, committed in the repo. The monthly job's
