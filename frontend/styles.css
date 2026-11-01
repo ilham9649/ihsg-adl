@@ -557,6 +557,42 @@ main { max-width: var(--maxw); margin: 0 auto; }
   text-transform: uppercase;
   color: var(--ink-faint);
 }
+.movers-modes { display: flex; gap: 14px; }
+.movers-mode {
+  padding: 2px 0 4px;
+  font-family: var(--serif-text);
+  font-size: .95rem;
+  color: var(--ink-faint);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color .25s, border-color .25s;
+}
+.movers-mode:hover { color: var(--ink-soft); }
+.movers-mode:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.movers-mode.is-active { color: var(--ink); border-bottom-color: var(--gold); cursor: default; }
+.movers-pick { margin-left: auto; display: flex; align-items: center; gap: 6px; align-self: center; }
+.movers-pick[hidden] { display: none; }
+.movers-input {
+  height: 30px;
+  padding: 0 8px;
+  font-family: var(--mono);
+  font-size: .76rem;
+  letter-spacing: .04em;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+}
+.movers-input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-color: var(--ink); }
+.movers-to { font-style: italic; color: var(--ink-faint); }
+.movers-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-bottom: 14px;
+}
 .movers-date {
   font-family: var(--serif-display);
   font-weight: 600;
@@ -571,7 +607,6 @@ main { max-width: var(--maxw); margin: 0 auto; }
 }
 .movers-move.up { color: var(--up); }
 .movers-move.down { color: var(--down); }
-.movers-step { margin-left: auto; display: flex; gap: 6px; align-self: center; }
 .movers-btn {
   width: 34px;
   height: 30px;
@@ -633,7 +668,7 @@ main { max-width: var(--maxw); margin: 0 auto; }
 
 @media (max-width: 620px) {
   .movers-cols { grid-template-columns: 1fr; gap: 20px; }
-  .movers-step { margin-left: 0; }
+  .movers-pick { margin-left: 0; flex-basis: 100%; }
 }
 
 /* ─────────────  LEDGER TABLE  ───────────── */

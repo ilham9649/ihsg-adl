@@ -173,12 +173,24 @@
       <div class="movers" id="movers" hidden>
         <div class="movers-head">
           <span class="movers-kicker">Who Moved It</span>
-          <span class="movers-date" id="movers-date">—</span>
-          <span class="movers-move" id="movers-move"></span>
-          <span class="movers-step">
+          <span class="movers-modes" role="group" aria-label="Read one session or a date range">
+            <button type="button" class="movers-mode is-active" id="movers-mode-day" aria-pressed="true">One day</button>
+            <button type="button" class="movers-mode" id="movers-mode-range" aria-pressed="false">Date range</button>
+          </span>
+          <span class="movers-pick" id="movers-pick-day">
             <button type="button" class="movers-btn" id="movers-prev" aria-label="Previous session">‹</button>
+            <input type="date" class="movers-input" id="movers-day" aria-label="Session date">
             <button type="button" class="movers-btn" id="movers-next" aria-label="Next session">›</button>
           </span>
+          <span class="movers-pick" id="movers-pick-range" hidden>
+            <input type="date" class="movers-input" id="movers-from" aria-label="From date">
+            <span class="movers-to">to</span>
+            <input type="date" class="movers-input" id="movers-to" aria-label="To date">
+          </span>
+        </div>
+        <div class="movers-title">
+          <span class="movers-date" id="movers-date">—</span>
+          <span class="movers-move" id="movers-move"></span>
         </div>
         <div class="movers-cols">
           <div class="movers-col up">
@@ -197,7 +209,8 @@
           monthly (latest <span id="movers-float-asof">—</span>), not IDX's own, so they can miss the real
           move by a few points — the gap is printed above. From 2 November 2026 the 81 stocks IDX
           flags for concentrated ownership, BREN, DSSA and BYAN among them, no longer count toward
-          the index. Covers the last year of sessions.
+          the index. A date range adds up each stock's points over its sessions, and shows its own
+          price move across them. Covers the last year of sessions.
         </p>
       </div>
     </section>

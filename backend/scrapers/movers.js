@@ -35,6 +35,7 @@ import { hscExcludedOn, floatOverrideOn } from '../lib/ihsg-rules.js';
 
 export const MOVERS_SESSIONS = 252; // one trading year — the window the estimate was checked over
 export const MOVERS_PER_SIDE = 5;
+export const RANGE_PER_SIDE = 10;   // a range spreads the move over more names, so it lists more
 export const WEIGHT_CAP = 0.09;     // IDX caps any one constituent at 9% of the index
 
 // The oldest float snapshot, committed in the repo. The monthly job's
@@ -125,10 +126,12 @@ export function moversHistoryStart(indexBars, sessions = MOVERS_SESSIONS) {
  *   doesn't drop anyone.
  *
  * Returns, oldest first:
- *   { date, change, pct, estimate, up, down, rest, counted }
- * change/pct are the REAL move; estimate is what the weights add up to; up and
- * down are the biggest lifters and draggers ({ ticker, pts, pct }); rest is
- * the net of every other constituent, so up + down + rest = estimate.
+ *   { date, close, change, pct, estimate, up, down, rest, counted, m }
+ * change/pct are the REAL move and close the IHSG's close; estimate is what
+ * the weights add up to; up and down are the biggest lifters and draggers
+ * ({ ticker, pts, pct }); rest is the net of every other constituent, so
+ * up + down + rest = estimate. m holds EVERY constituent that moved the index
+ * by at least 0.01 points, { ticker: [pts, pct] }, for aggregateMovers.
  */
 export function computeMovers(indexBars, tickers, {
   sessions = MOVERS_SESSIONS,
@@ -177,22 +180,101 @@ export function computeMovers(indexBars, tickers, {
     let estimate = 0;
     rows.forEach((r, i) => { r.pts = base * weights[i] * r.ret; estimate += r.pts; });
 
-    const ranked = rows.slice().sort((a, b) => b.pts - a.pts);
-    const up = ranked.filter(r => r.pts > 0).slice(0, perSide);
-    const down = ranked.filter(r => r.pts < 0).reverse().slice(0, perSide);
-    const shown = [...up, ...down].reduce((sum, r) => sum + r.pts, 0);
-    const mover = r => ({ ticker: r.ticker, pts: round2(r.pts), pct: round2(r.ret * 100) });
+    const entries = rows.map(r => ({ ticker: r.ticker, pts: r.pts, pct: r.ret * 100 }));
+    const m = {};
+    for (const e of entries) {
+      const pts = round2(e.pts);
+      if (pts !== 0) m[e.ticker] = [pts, round2(e.pct)];
+    }
 
     days.push({
       date,
+      close: round2(cal[k].close),
       change: round2(cal[k].close - base),
       pct: round2((cal[k].close / base - 1) * 100),
       estimate: round2(estimate),
-      up: up.map(mover),
-      down: down.map(mover),
-      rest: round2(estimate - shown),
+      ...rankMovers(entries, estimate, perSide),
       counted: rows.length,
+      m,
     });
   }
   return days;
+}
+
+// The biggest lifters and draggers among `entries` ({ ticker, pts, pct }), and
+// the net of everyone else — the same ranking for one session and for a range.
+function rankMovers(entries, total, perSide) {
+  const ranked = entries.slice().sort((a, b) => b.pts - a.pts);
+  const up = ranked.filter(e => e.pts > 0).slice(0, perSide);
+  const down = ranked.filter(e => e.pts < 0).reverse().slice(0, perSide);
+  const shown = [...up, ...down].reduce((sum, e) => sum + e.pts, 0);
+  const mover = e => ({ ticker: e.ticker, pts: round2(e.pts), pct: round2(e.pct) });
+  return { up: up.map(mover), down: down.map(mover), rest: round2(total - shown) };
+}
+
+/**
+ * The movers over a run of sessions, from and to inclusive — what a date range
+ * on the page asks for. A stock's points ADD across sessions (each session's
+ * points are its share of that day's move, and the day moves sum to the
+ * range's), while its own price move COMPOUNDS. `days` are computeMovers'
+ * sessions, carrying `m`. Null when no session falls in the range.
+ *
+ * The range's real move telescopes: the IHSG's last close less the close
+ * before the first session (that session's close less its change).
+ */
+export function aggregateMovers(days, from, to, perSide = RANGE_PER_SIDE) {
+  const span = days.filter(d => d.date >= from && d.date <= to).sort((a, b) => a.date.localeCompare(b.date));
+  if (!span.length) return null;
+
+  const totals = new Map();
+  let estimate = 0;
+  for (const d of span) {
+    estimate += d.estimate;
+    for (const [ticker, [pts, pct]] of Object.entries(d.m || {})) {
+      const t = totals.get(ticker) || { ticker, pts: 0, growth: 1 };
+      t.pts += pts;
+      t.growth *= 1 + pct / 100;
+      totals.set(ticker, t);
+    }
+  }
+
+  const first = span[0], last = span[span.length - 1];
+  const base = first.close - first.change;
+  const change = last.close - base;
+  const entries = [...totals.values()].map(t => ({ ticker: t.ticker, pts: t.pts, pct: (t.growth - 1) * 100 }));
+  return {
+    from: first.date,
+    to: last.date,
+    sessions: span.length,
+    change: round2(change),
+    pct: round2((change / base) * 100),
+    estimate: round2(estimate),
+    ...rankMovers(entries, estimate, perSide),
+    counted: totals.size,
+  };
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const isIsoDate = d => {
+  if (!ISO_DATE.test(d)) return false;
+  const t = new Date(d + 'T00:00:00Z');
+  return !isNaN(t) && t.toISOString().startsWith(d); // rejects 2026-13-01 and 2026-02-30
+};
+
+/** A from/to pair from a request path: both real YYYY-MM-DD dates, put in order. Null otherwise. */
+export function parseRange(from, to) {
+  if (!isIsoDate(from) || !isIsoDate(to)) return null;
+  return from <= to ? { from, to } : { from: to, to: from };
+}
+
+/** Every month (YYYY-MM) from `from` to `to` inclusive — the storage items a range reads. */
+export function monthsSpanned(from, to) {
+  const months = [];
+  let [y, m] = from.slice(0, 7).split('-').map(Number);
+  const [yEnd, mEnd] = to.slice(0, 7).split('-').map(Number);
+  while (y < yEnd || (y === yEnd && m <= mEnd)) {
+    months.push(`${y}-${String(m).padStart(2, '0')}`);
+    if (++m > 12) { m = 1; y++; }
+  }
+  return months;
 }

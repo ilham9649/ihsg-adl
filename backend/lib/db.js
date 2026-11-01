@@ -312,6 +312,56 @@ export async function getMovers() {
   };
 }
 
+// ── Index movers, every constituent per session (for date ranges) ──
+// `_movers` above holds each session's top five, for the hover. A date range
+// needs every stock's points on every session (~400 a day move the index by
+// 0.01 pts or more), ~1MB a year — so it is stored a month per item
+// (`movers#YYYY-MM`, ~100-200KB), overwritten with the window on every
+// refresh. A range request reads only the months it spans.
+const MOVERS_MONTH_PREFIX = 'movers#';
+
+const monthBefore = month => {
+  const [y, m] = month.split('-').map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+};
+
+export async function putMoversMonths(days) {
+  const byMonth = new Map();
+  for (const d of days) {
+    const month = d.date.slice(0, 7);
+    if (!byMonth.has(month)) byMonth.set(month, []);
+    byMonth.get(month).push(d);
+  }
+  const updatedAt = new Date().toISOString();
+  for (const [month, rows] of byMonth) {
+    await client.send(new PutItemCommand({
+      TableName: TABLE_NAME,
+      Item: {
+        date: { S: `${MOVERS_MONTH_PREFIX}${month}` },
+        updatedAt: { S: updatedAt },
+        days: { S: JSON.stringify(rows) },
+      },
+    }));
+  }
+  // The window slides a session a day, so the month it just left is stale:
+  // drop it (and the one before, in case a refresh was missed) rather than
+  // let a range request read a month no longer recomputed.
+  const first = [...byMonth.keys()].sort()[0];
+  if (first) {
+    const gone = monthBefore(first);
+    await deleteDates([`${MOVERS_MONTH_PREFIX}${gone}`, `${MOVERS_MONTH_PREFIX}${monthBefore(gone)}`]);
+  }
+}
+
+/** Every stored session in the given months (YYYY-MM), in no particular order. */
+export async function getMoversDays(months) {
+  const results = await Promise.all(months.map(month => client.send(new GetItemCommand({
+    TableName: TABLE_NAME,
+    Key: { date: { S: `${MOVERS_MONTH_PREFIX}${month}` } },
+  }))));
+  return results.flatMap(r => (r.Item?.days?.S ? JSON.parse(r.Item.days.S) : []));
+}
+
 // ── Free-float snapshots ──
 // One item PER RUN of the monthly freefloat job (`ff#YYYY-MM-DD`, same prefix
 // scheme as Sentiment), each holding the whole listing's ratios as JSON

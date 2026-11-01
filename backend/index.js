@@ -8,9 +8,9 @@ import { buildValuations, fetchShareCounts } from './scrapers/valuation.js';
 import { fetchHeadlines, filterToday, wibDateString } from './scrapers/news.js';
 import { scoreSentiment } from './scrapers/sentiment.js';
 import { ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
-import { computeMovers, moversHistoryStart, BASELINE_FLOATS } from './scrapers/movers.js';
+import { computeMovers, moversHistoryStart, BASELINE_FLOATS, aggregateMovers, parseRange, monthsSpanned } from './scrapers/movers.js';
 import { buildFloatSnapshot } from './scrapers/freefloat.js';
-import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, putMovers, getMovers, putFloatSnapshot, getFloatSnapshots, acquireRefreshLock, releaseRefreshLock, acquireValuationLock, releaseValuationLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
+import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, putMovers, getMovers, putMoversMonths, getMoversDays, putFloatSnapshot, getFloatSnapshots, acquireRefreshLock, releaseRefreshLock, acquireValuationLock, releaseValuationLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
 
 const BASE_HEADERS = {
   'Content-Type': 'application/json',
@@ -74,6 +74,9 @@ function isRefreshAuthorized(event) {
 // (900s is configured). Counts are folded per-day incrementally (see below) to
 // keep memory bounded for the large universe.
 const DAYS_BACK = 6100; // ~16.7 calendar years (history back to ~2010)
+
+// Movers are stored for the last 252 sessions — at most 14 calendar months.
+const MAX_RANGE_MONTHS = 14;
 
 async function refreshData() {
   const locked = await acquireRefreshLock();
@@ -212,7 +215,10 @@ async function refreshData() {
       const movers = computeMovers(indexBars, moverInputs, { floatSnapshots });
       if (movers.length > 0) {
         const floatAsOf = floatSnapshots.map(snap => snap.date).sort().pop();
-        await putMovers(movers, floatAsOf);
+        // Two shapes: each session's top five for the hover (`_movers`), and
+        // every stock's points, a month per item, for date ranges.
+        await putMovers(movers.map(({ m, ...day }) => day), floatAsOf);
+        await putMoversMonths(movers.map(({ up, down, rest, ...day }) => day));
         moverDays = movers.length;
       }
     } catch (err) {
@@ -412,6 +418,23 @@ export const handler = async (event) => {
       if (!isRefreshAuthorized(event)) return response(401, { error: 'Unauthorized' });
       const result = await refreshFreeFloat();
       return response(200, result);
+    }
+
+    // A date range — or one date, from = to — summed over its sessions. The
+    // dates are path segments, not a query string: CloudFront forwards no
+    // query strings to the API (query_string = false), so ?from= never arrives.
+    const range = method === 'GET' && path.match(/^\/api\/movers\/([^/]+)\/([^/]+)\/?$/);
+    if (range) {
+      const dates = parseRange(range[1], range[2]);
+      if (!dates) return response(400, { error: 'Dates must be YYYY-MM-DD' });
+      const months = monthsSpanned(dates.from, dates.to);
+      // Only about a year is stored; a longer span can only cost reads.
+      if (months.length > MAX_RANGE_MONTHS) return response(400, { error: `Ranges are limited to ${MAX_RANGE_MONTHS} months` });
+      const result = aggregateMovers(await getMoversDays(months), dates.from, dates.to);
+      // An empty range is an answer, not an error — same 200 + success:false as
+      // the other routes use, so the page's console stays clean.
+      if (!result) return response(200, { success: false, message: 'No sessions on record in that range' }, { cacheable: true });
+      return response(200, { success: true, ...result }, { cacheable: true });
     }
 
     // Rides along with /api/ad/refresh like the 200-week page — no refresh route.

@@ -175,6 +175,12 @@ document.addEventListener('DOMContentLoaded', () => {
     .forEach(cb => cb.addEventListener('change', applyMaToggles));
   document.getElementById('movers-prev').addEventListener('click', () => stepMovers(-1));
   document.getElementById('movers-next').addEventListener('click', () => stepMovers(1));
+  document.getElementById('movers-day').addEventListener('change', e => pickDay(e.target.value));
+  document.getElementById('movers-mode-day').addEventListener('click', () => setMoversMode('day'));
+  document.getElementById('movers-mode-range').addEventListener('click', () => setMoversMode('range'));
+  for (const id of ['movers-from', 'movers-to']) {
+    document.getElementById(id).addEventListener('change', loadRange);
+  }
   fetchData();
   fetchMovers();
 });
@@ -339,14 +345,20 @@ function renderPanels(data) {
 // (scrapers/movers.js): it needs share counts and free floats the browser
 // doesn't have. Fetched on its own, so the page never waits on it and the
 // block simply stays hidden if it isn't there.
-let movers = [];             // oldest first
+let movers = [];             // oldest first — each session's top five
 let moversByDate = new Map();
-let moverDate = null;        // the session on show
+let moverDate = null;        // the session on show in day mode
+let moversMode = 'day';      // 'day' | 'range'
+let rangeRequest = 0;        // only the latest range request may render
 
 const fmtPts = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1);
 const fmtPct = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1) + '%';
 const longDate = ds => new Date(ds + 'T00:00:00Z').toLocaleDateString('en-GB',
   { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+const shortDate = (ds, withYear = true) => new Date(ds + 'T00:00:00Z').toLocaleDateString('en-GB',
+  { day: 'numeric', month: 'short', ...(withYear && { year: 'numeric' }), timeZone: 'UTC' });
+// "1 Oct – 28 Oct 2026": the year once when both ends share it.
+const spanTitle = (from, to) => `${shortDate(from, from.slice(0, 4) !== to.slice(0, 4))} – ${shortDate(to)}`;
 
 async function fetchMovers() {
   try {
@@ -358,6 +370,12 @@ async function fetchMovers() {
     moversByDate = new Map(movers.map(d => [d.date, d]));
     document.getElementById('movers-float-asof').textContent =
       payload.floatAsOf ? `as of ${payload.floatAsOf}` : 'date unknown';
+    // The pickers offer only what is on record.
+    for (const id of ['movers-day', 'movers-from', 'movers-to']) {
+      const input = document.getElementById(id);
+      input.min = movers[0].date;
+      input.max = movers[movers.length - 1].date;
+    }
     document.getElementById('movers').hidden = false;
     showMovers(movers[movers.length - 1].date);
   } catch (err) {
@@ -365,10 +383,11 @@ async function fetchMovers() {
   }
 }
 
-// Follows the hover on any panel, and stays on the last session hovered when
-// the pointer leaves — moving down to read the list must not snap it back.
+// In day mode, follows the hover on any panel, and stays on the last session
+// hovered when the pointer leaves — moving down to read the list must not snap
+// it back. A range the reader typed in is never overridden by a stray hover.
 function linkMovers(data) {
-  HoverSync.register({ show: (i) => { if (data[i]) showMovers(data[i].date); }, hide: () => {} });
+  HoverSync.register({ show: (i) => { if (moversMode === 'day' && data[i]) showMovers(data[i].date); }, hide: () => {} });
 }
 
 // Where a session sits among the attributed ones: its own index, or halfway
@@ -384,6 +403,16 @@ function stepMovers(dir) {
   const pos = moverPos(moverDate);
   const target = dir < 0 ? movers[Math.ceil(pos) - 1] : movers[Math.floor(pos) + 1];
   if (target) showMovers(target.date);
+}
+
+// A date picked in the calendar may be a weekend or a holiday: read the last
+// session on or before it, and say so.
+function pickDay(value) {
+  if (!value) return;
+  let session = null;
+  for (const d of movers) if (d.date <= value) session = d.date;
+  if (!session || session === value) showMovers(value, { force: true });
+  else showMovers(session, { force: true, note: `No trading on ${longDate(value)}; showing the session before.` });
 }
 
 function moverItem(m, scale) {
@@ -416,35 +445,94 @@ function fillMovers(listId, rows, scale, emptyText) {
   list.replaceChildren(...rows.map(m => moverItem(m, scale)));
 }
 
-function showMovers(date) {
-  if (!movers.length || date === moverDate) return;
+// One renderer for a session and a range: the title, the IHSG's real move,
+// the lifters and draggers, and the line that keeps the estimate honest.
+function renderMovers({ title, change, pct, up, down, rest, estimate, counted, note = '' }) {
+  document.getElementById('movers-date').textContent = title;
+  const move = document.getElementById('movers-move');
+  move.textContent = `IHSG ${fmtPts(change)} pts (${fmtPct(pct)})`;
+  move.className = 'movers-move ' + (change >= 0 ? 'up' : 'down');
+  const scale = Math.max(...up.concat(down).map(m => Math.abs(m.pts)), 0) || 1;
+  fillMovers('movers-up', up, scale, 'Nothing lifted it.');
+  fillMovers('movers-down', down, scale, 'Nothing dragged it.');
+  const others = counted - up.length - down.length;
+  document.getElementById('movers-foot').textContent = (note ? note + ' ' : '') +
+    `The other ${others.toLocaleString('en-US')} stocks, net: ${fmtPts(rest)} pts. ` +
+    `All together these weights come to ${fmtPts(estimate)}, against the real ${fmtPts(change)}.`;
+}
+
+function renderMoversEmpty(title, message) {
+  document.getElementById('movers-date').textContent = title;
+  document.getElementById('movers-move').textContent = '';
+  fillMovers('movers-up', [], 1, '—');
+  fillMovers('movers-down', [], 1, '—');
+  document.getElementById('movers-foot').textContent = message;
+}
+
+function showMovers(date, { force = false, note = '' } = {}) {
+  if (!movers.length || (date === moverDate && !force)) return;
   moverDate = date;
-  const day = moversByDate.get(date);
   const pos = moverPos(date);
   document.getElementById('movers-prev').disabled = !movers[Math.ceil(pos) - 1];
   document.getElementById('movers-next').disabled = !movers[Math.floor(pos) + 1];
-  document.getElementById('movers-date').textContent = longDate(date);
+  document.getElementById('movers-day').value = date;
 
-  const move = document.getElementById('movers-move');
-  const foot = document.getElementById('movers-foot');
+  const day = moversByDate.get(date);
   if (!day) {
-    move.textContent = '';
-    fillMovers('movers-up', [], 1, '—');
-    fillMovers('movers-down', [], 1, '—');
-    foot.textContent = date < movers[0].date
+    renderMoversEmpty(longDate(date), date < movers[0].date
       ? `No attribution this far back: it covers the last ${movers.length} sessions, from ${longDate(movers[0].date)}.`
-      : 'No attribution on record for this session.';
+      : 'No attribution on record for this session.');
     return;
   }
+  renderMovers({ ...day, title: longDate(date), note });
+}
 
-  move.textContent = `IHSG ${fmtPts(day.change)} pts (${fmtPct(day.pct)})`;
-  move.className = 'movers-move ' + (day.change >= 0 ? 'up' : 'down');
-  const scale = Math.max(...day.up.concat(day.down).map(m => Math.abs(m.pts)), 0) || 1;
-  fillMovers('movers-up', day.up, scale, 'Nothing lifted it.');
-  fillMovers('movers-down', day.down, scale, 'Nothing dragged it.');
-  const others = day.counted - day.up.length - day.down.length;
-  foot.textContent = `The other ${others.toLocaleString('en-US')} stocks, net: ${fmtPts(day.rest)} pts. ` +
-    `All together these weights come to ${fmtPts(day.estimate)}, against the real ${fmtPts(day.change)}.`;
+function setMoversMode(mode) {
+  if (!movers.length || mode === moversMode) return;
+  moversMode = mode;
+  for (const m of ['day', 'range']) {
+    const tab = document.getElementById(`movers-mode-${m}`);
+    tab.classList.toggle('is-active', m === mode);
+    tab.setAttribute('aria-pressed', String(m === mode));
+    document.getElementById(`movers-pick-${m}`).hidden = m !== mode;
+  }
+  if (mode === 'day') {
+    showMovers(moverDate || movers[movers.length - 1].date, { force: true });
+    return;
+  }
+  // First visit: the last twenty sessions, about a month.
+  const from = document.getElementById('movers-from');
+  const to = document.getElementById('movers-to');
+  if (!to.value) to.value = movers[movers.length - 1].date;
+  if (!from.value) from.value = movers[Math.max(0, movers.length - 20)].date;
+  loadRange();
+}
+
+// A range is summed on the server: it needs every stock's points on every
+// session, which is far more than the page holds (GET /api/movers/{from}/{to}).
+async function loadRange() {
+  const a = document.getElementById('movers-from').value;
+  const b = document.getElementById('movers-to').value;
+  if (!a || !b) return;
+  const [from, to] = a <= b ? [a, b] : [b, a];
+  const request = ++rangeRequest;
+  const title = spanTitle(from, to);
+  renderMoversEmpty(title, 'Adding up the range…');
+  try {
+    const res = await fetch(`${API_BASE}/api/movers/${from}/${to}`);
+    const json = await res.json();
+    const payload = json.body && json.statusCode ? JSON.parse(json.body) : json;
+    if (request !== rangeRequest || moversMode !== 'range') return; // a newer pick won
+    if (!payload.success) {
+      renderMoversEmpty(title, payload.message || payload.error || 'No sessions on record in that range.');
+      return;
+    }
+    const n = payload.sessions;
+    renderMovers({ ...payload, title: `${spanTitle(payload.from, payload.to)} · ${n} session${n === 1 ? '' : 's'}` });
+  } catch (err) {
+    console.error('Movers range error:', err);
+    if (request === rangeRequest) renderMoversEmpty(title, 'Could not load that range.');
+  }
 }
 
 // ── Cards ──

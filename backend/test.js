@@ -12,7 +12,7 @@ import { dcfPerShare, residualIncomePerShare, isFinancial, median, trailingTwelv
 import { parseRssItems, mergeHeadlines, wibDateString, filterToday } from './scrapers/news.js';
 import { parseScoreResponse } from './scrapers/sentiment.js';
 import { weeklyCloses, ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
-import { valueOn, capWeights, computeMovers, moversHistoryStart } from './scrapers/movers.js';
+import { valueOn, capWeights, computeMovers, moversHistoryStart, aggregateMovers, parseRange, monthsSpanned } from './scrapers/movers.js';
 import { parseStat, buildFloatSnapshot, MIN_COVERAGE } from './scrapers/freefloat.js';
 import { HSC_SCHEDULE, hscExcludedOn, FLOAT_OVERRIDES, floatOverrideOn } from './lib/ihsg-rules.js';
 
@@ -957,5 +957,84 @@ describe('buildFloatSnapshot — one run of the monthly job', () => {
     ratios[codes[9]] = 0.3;
     strictEqual((await run(codes, ratios)).usable, true);
     strictEqual((await run([], {})).usable, false);
+  });
+});
+
+describe('aggregateMovers — a date range', () => {
+  // Three sessions of a two-stock index. The IHSG closes 1000 → 1010 → 990 → 1005.
+  const days = [
+    { date: '2026-10-01', close: 1010, change: 10, pct: 1, estimate: 10, counted: 2, m: { A: [8, 2], B: [2, 1] } },
+    { date: '2026-10-02', close: 990, change: -20, pct: -1.98, estimate: -21, counted: 2, m: { A: [-15, -3], B: [-6, -2] } },
+    { date: '2026-10-05', close: 1005, change: 15, pct: 1.52, estimate: 15, counted: 2, m: { A: [12, 2.5], B: [3, 1] } },
+  ];
+
+  test('points add across sessions; the real move telescopes from the close before the first', () => {
+    const r = aggregateMovers(days, '2026-10-01', '2026-10-05');
+    strictEqual(r.sessions, 3);
+    strictEqual(r.change, 5);   // 1005 − 1000
+    strictEqual(r.pct, 0.5);
+    strictEqual(r.estimate, 4); // 10 − 21 + 15
+    strictEqual(r.up[0].ticker, 'A');
+    strictEqual(r.up[0].pts, 5);
+    strictEqual(r.down[0].ticker, 'B');
+    strictEqual(r.down[0].pts, -1);
+    strictEqual(r.rest, 0);
+  });
+
+  test('a stock\'s own move compounds over the range', () => {
+    const r = aggregateMovers(days, '2026-10-01', '2026-10-05');
+    strictEqual(r.up[0].pct, 1.41); // 1.02 × 0.97 × 1.025 − 1
+  });
+
+  test('only sessions inside the range count, and the range reports its actual sessions', () => {
+    const r = aggregateMovers(days, '2026-09-28', '2026-10-03'); // a weekend at each end
+    strictEqual(r.from, '2026-10-01');
+    strictEqual(r.to, '2026-10-02');
+    strictEqual(r.sessions, 2);
+    strictEqual(r.change, -10); // 990 − 1000
+  });
+
+  test('one date is a range of one session', () => {
+    const r = aggregateMovers(days, '2026-10-02', '2026-10-02');
+    strictEqual(r.change, -20);
+    strictEqual(r.down[0].ticker, 'A');
+    strictEqual(r.down[0].pct, -3);
+  });
+
+  test('no session in range is null, not an empty result', () => {
+    strictEqual(aggregateMovers(days, '2026-11-01', '2026-11-30'), null);
+  });
+
+  test('one session of computeMovers reads the same as its own top five', () => {
+    const index = [{ date: '2026-10-01', close: 1500 }, { date: '2026-10-02', close: 1450 }];
+    const tickers = [
+      { ticker: 'A', bars: [{ date: '2026-10-01', close: 10 }, { date: '2026-10-02', close: 11 }], shares: [{ date: '2025-12-31', value: 100 }] },
+      { ticker: 'B', bars: [{ date: '2026-10-01', close: 5 }, { date: '2026-10-02', close: 4.5 }], shares: [{ date: '2025-12-31', value: 200 }] },
+    ];
+    const [day] = computeMovers(index, tickers, {
+      floatSnapshots: [{ date: '2026-01-01', floats: { A: 0.5, B: 1 } }], excludedOn: () => new Set(), floatOn: () => null, weightCap: 1,
+    });
+    const r = aggregateMovers([day], day.date, day.date, 5);
+    strictEqual(r.change, day.change);
+    strictEqual(r.pct, day.pct);
+    strictEqual(JSON.stringify(r.up), JSON.stringify(day.up));
+    strictEqual(JSON.stringify(r.down), JSON.stringify(day.down));
+  });
+});
+
+describe('parseRange and monthsSpanned — reading a range request', () => {
+  test('accepts real dates, and puts a reversed pair in order', () => {
+    strictEqual(JSON.stringify(parseRange('2026-03-31', '2026-01-02')), '{"from":"2026-01-02","to":"2026-03-31"}');
+  });
+
+  test('rejects anything that is not a real YYYY-MM-DD date', () => {
+    strictEqual(parseRange('2026-13-01', '2026-01-01'), null);
+    strictEqual(parseRange('2026-02-30', '2026-03-01'), null);
+    strictEqual(parseRange('yesterday', '2026-03-01'), null);
+  });
+
+  test('lists every month a range touches, across a year end', () => {
+    strictEqual(monthsSpanned('2025-11-15', '2026-02-03').join(), '2025-11,2025-12,2026-01,2026-02');
+    strictEqual(monthsSpanned('2026-05-01', '2026-05-31').join(), '2026-05');
   });
 });
