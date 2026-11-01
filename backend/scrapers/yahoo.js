@@ -74,7 +74,7 @@ export async function fetchQuotes(ticker, daysBack = 60) {
 // comparison across the gap is noise: a resumed stock often reopens ±70%, and a
 // reassigned code compares one company's close to another's. Skip that one
 // comparison; the rest of both stretches still count normally.
-const MAX_BAR_GAP_DAYS = 30;
+export const MAX_BAR_GAP_DAYS = 30;
 
 export function isStaleComparison(prevDate, currDate) {
   return (new Date(currDate) - new Date(prevDate)) / 86400000 > MAX_BAR_GAP_DAYS;

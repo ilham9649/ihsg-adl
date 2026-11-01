@@ -279,6 +279,129 @@ export async function getMa200wSnapshot() {
   };
 }
 
+// ── Index movers ──
+// One item, like Valuation: the whole trailing year of per-session
+// attributions (scrapers/movers.js) is recomputed on every breadth refresh and
+// read whole. ~252 sessions × 10 movers ≈ 130KB against DynamoDB's 400KB item
+// limit — a window much past two years needs one item per day instead.
+const MOVERS_KEY = '_movers';
+
+export async function putMovers(days, floatAsOf) {
+  await client.send(new PutItemCommand({
+    TableName: TABLE_NAME,
+    Item: {
+      date: { S: MOVERS_KEY },
+      updatedAt: { S: new Date().toISOString() },
+      // Which free-float table the weights came from, so the page can say so.
+      floatAsOf: { S: floatAsOf || '' },
+      rows: { S: JSON.stringify(days) },
+    },
+  }));
+}
+
+export async function getMovers() {
+  const result = await client.send(new GetItemCommand({
+    TableName: TABLE_NAME,
+    Key: { date: { S: MOVERS_KEY } },
+  }));
+  if (!result.Item?.rows?.S) return { updatedAt: null, floatAsOf: null, rows: [] };
+  return {
+    updatedAt: result.Item.updatedAt?.S || null,
+    floatAsOf: result.Item.floatAsOf?.S || null,
+    rows: JSON.parse(result.Item.rows.S),
+  };
+}
+
+// ── Index movers, every constituent per session (for date ranges) ──
+// `_movers` above holds each session's top five, for the hover. A date range
+// needs every stock's points on every session (~400 a day move the index by
+// 0.01 pts or more), ~1MB a year — so it is stored a month per item
+// (`movers#YYYY-MM`, ~100-200KB), overwritten with the window on every
+// refresh. A range request reads only the months it spans.
+const MOVERS_MONTH_PREFIX = 'movers#';
+
+const monthBefore = month => {
+  const [y, m] = month.split('-').map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+};
+
+export async function putMoversMonths(days) {
+  const byMonth = new Map();
+  for (const d of days) {
+    const month = d.date.slice(0, 7);
+    if (!byMonth.has(month)) byMonth.set(month, []);
+    byMonth.get(month).push(d);
+  }
+  const updatedAt = new Date().toISOString();
+  for (const [month, rows] of byMonth) {
+    await client.send(new PutItemCommand({
+      TableName: TABLE_NAME,
+      Item: {
+        date: { S: `${MOVERS_MONTH_PREFIX}${month}` },
+        updatedAt: { S: updatedAt },
+        days: { S: JSON.stringify(rows) },
+      },
+    }));
+  }
+  // The window slides a session a day, so the month it just left is stale:
+  // drop it (and the one before, in case a refresh was missed) rather than
+  // let a range request read a month no longer recomputed.
+  const first = [...byMonth.keys()].sort()[0];
+  if (first) {
+    const gone = monthBefore(first);
+    await deleteDates([`${MOVERS_MONTH_PREFIX}${gone}`, `${MOVERS_MONTH_PREFIX}${monthBefore(gone)}`]);
+  }
+}
+
+/** Every stored session in the given months (YYYY-MM), in no particular order. */
+export async function getMoversDays(months) {
+  const results = await Promise.all(months.map(month => client.send(new GetItemCommand({
+    TableName: TABLE_NAME,
+    Key: { date: { S: `${MOVERS_MONTH_PREFIX}${month}` } },
+  }))));
+  return results.flatMap(r => (r.Item?.days?.S ? JSON.parse(r.Item.days.S) : []));
+}
+
+// ── Free-float snapshots ──
+// One item PER RUN of the monthly freefloat job (`ff#YYYY-MM-DD`, same prefix
+// scheme as Sentiment), each holding the whole listing's ratios as JSON
+// (~12KB). Kept forever: together they are the dated float history the
+// index-movers estimate weights past sessions by.
+const FLOAT_PREFIX = 'ff#';
+
+export async function putFloatSnapshot({ date, floats, attempted }) {
+  await client.send(new PutItemCommand({
+    TableName: TABLE_NAME,
+    Item: {
+      date: { S: `${FLOAT_PREFIX}${date}` },
+      day: { S: date },
+      attempted: { N: String(attempted) },
+      floats: { S: JSON.stringify(floats) },
+      updatedAt: { S: new Date().toISOString() },
+    },
+  }));
+}
+
+export async function getFloatSnapshots() {
+  const items = [];
+  let lastEvaluatedKey;
+  do {
+    const result = await client.send(new ScanCommand({
+      TableName: TABLE_NAME,
+      FilterExpression: 'begins_with(#d, :p)',
+      ExpressionAttributeNames: { '#d': 'date' },
+      ExpressionAttributeValues: { ':p': { S: FLOAT_PREFIX } },
+      ExclusiveStartKey: lastEvaluatedKey,
+    }));
+    items.push(...(result.Items || []));
+    lastEvaluatedKey = result.LastEvaluatedKey;
+  } while (lastEvaluatedKey);
+
+  return items
+    .map(item => ({ date: item.day.S, floats: JSON.parse(item.floats.S) }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
 // ── Generic short-lived lock (TTL-gated conditional PutItem) ──
 // Same primitive serves two different jobs: a mutex (block a second run while
 // one is in flight) and a cooldown (block rapid repeats even sequentially).

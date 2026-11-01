@@ -2,13 +2,15 @@
 // Lambda Handler (supports REST API v1 & HTTP API v2)
 // ──────────────────────────────────────────────
 
-import { getAllTickers } from './lib/tickers.js';
+import { getAllTickers, IDX_TICKERS } from './lib/tickers.js';
 import { fetchChart, fetchQuotes, computeSeries, isStaleComparison } from './scrapers/yahoo.js';
-import { buildValuations } from './scrapers/valuation.js';
+import { buildValuations, fetchShareCounts } from './scrapers/valuation.js';
 import { fetchHeadlines, filterToday, wibDateString } from './scrapers/news.js';
 import { scoreSentiment } from './scrapers/sentiment.js';
 import { ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
-import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, acquireRefreshLock, releaseRefreshLock, acquireValuationLock, releaseValuationLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
+import { computeMovers, moversHistoryStart, BASELINE_FLOATS, aggregateMovers, parseRange, monthsSpanned } from './scrapers/movers.js';
+import { buildFloatSnapshot } from './scrapers/freefloat.js';
+import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, putMovers, getMovers, putMoversMonths, getMoversDays, putFloatSnapshot, getFloatSnapshots, acquireRefreshLock, releaseRefreshLock, acquireValuationLock, releaseValuationLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
 
 const BASE_HEADERS = {
   'Content-Type': 'application/json',
@@ -73,6 +75,9 @@ function isRefreshAuthorized(event) {
 // keep memory bounded for the large universe.
 const DAYS_BACK = 6100; // ~16.7 calendar years (history back to ~2010)
 
+// Movers are stored for the last 252 sessions — at most 14 calendar months.
+const MAX_RANGE_MONTHS = 14;
+
 async function refreshData() {
   const locked = await acquireRefreshLock();
   if (!locked) {
@@ -95,6 +100,8 @@ async function refreshData() {
     // real reference date that reads as sitting motionless AT its line
     // instead of what it is: a stock that hasn't traded in months.
     const latestIndexDate = indexBars[indexBars.length - 1]?.date;
+    // The movers estimate only needs the last year of closes, not 16 years.
+    const moversFrom = moversHistoryStart(indexBars);
 
     // Fold each ticker's up/down/unchanged directly into per-day counts as we go,
     // instead of holding every ticker's full history in memory (≈957×1900 rows).
@@ -102,6 +109,10 @@ async function refreshData() {
     // 200-week MA distance rides along on the SAME fetch — DAYS_BACK already
     // covers far more than 200 weeks, so this costs zero extra Yahoo calls.
     const ma200wRows = [];
+    // Index movers ride along too: the last year of closes plus each ticker's
+    // share counts (one small extra Yahoo call per ticker, made in parallel
+    // with its chart fetch). See scrapers/movers.js.
+    const moverInputs = [];
     let successCount = 0;
     let failCount = 0;
 
@@ -110,10 +121,13 @@ async function refreshData() {
 
     for (let i = 0; i < tickers.length; i += BATCH_SIZE) {
       const batch = tickers.slice(i, i + BATCH_SIZE);
-      const results = await Promise.all(batch.map(ticker => fetchQuotes(ticker, DAYS_BACK)));
+      const results = await Promise.all(batch.map(ticker => Promise.all([
+        fetchQuotes(ticker, DAYS_BACK),
+        fetchShareCounts(ticker),
+      ])));
 
       for (let j = 0; j < batch.length; j++) {
-        const quotes = results[j];
+        const [quotes, shares] = results[j];
         const MIN_DATA_POINTS = 10;
         if (quotes.length >= MIN_DATA_POINTS) {
           for (let k = 1; k < quotes.length; k++) {
@@ -137,6 +151,16 @@ async function refreshData() {
           if (snap) ma200wRows.push({ ticker: batch[j].replace(/\.JK$/, ''), ...snap });
         } else {
           failCount++;
+        }
+
+        // Not gated on MIN_DATA_POINTS: a week-old listing is already in the index.
+        const recent = quotes.filter(q => q.date >= moversFrom);
+        if (recent.length && shares.length) {
+          moverInputs.push({
+            ticker: batch[j].replace(/\.JK$/, ''),
+            bars: recent.map(q => ({ date: q.date, close: q.close })),
+            shares,
+          });
         }
       }
 
@@ -182,7 +206,26 @@ async function refreshData() {
       if (latestDate) await putMa200wDaily({ date: latestDate, ...summarizeMa200w(ma200wRows) });
     }
 
-    console.log(`Refresh complete: ${successCount} OK, ${failCount} failed, ${series.length} days stored, ${ma200wRows.length} with a 200w MA`);
+    // Logged, not thrown: the movers lean on inputs breadth doesn't (share
+    // counts, the free-float snapshots), and the breadth series above is
+    // already written — a failure here must not report the whole refresh as failed.
+    let moverDays = 0;
+    try {
+      const floatSnapshots = [BASELINE_FLOATS, ...await getFloatSnapshots()];
+      const movers = computeMovers(indexBars, moverInputs, { floatSnapshots });
+      if (movers.length > 0) {
+        const floatAsOf = floatSnapshots.map(snap => snap.date).sort().pop();
+        // Two shapes: each session's top five for the hover (`_movers`), and
+        // every stock's points, a month per item, for date ranges.
+        await putMovers(movers.map(({ m, ...day }) => day), floatAsOf);
+        await putMoversMonths(movers.map(({ up, down, rest, ...day }) => day));
+        moverDays = movers.length;
+      }
+    } catch (err) {
+      console.error('Index movers failed:', err);
+    }
+
+    console.log(`Refresh complete: ${successCount} OK, ${failCount} failed, ${series.length} days stored, ${ma200wRows.length} with a 200w MA, ${moverDays} days of movers from ${moverInputs.length} tickers`);
 
     return {
       success: true,
@@ -193,6 +236,7 @@ async function refreshData() {
       daysDropped: staleDates.length,
       latestDate: series[series.length - 1]?.date,
       ma200wTickers: ma200wRows.length,
+      moverDays,
     };
   } finally {
     await releaseRefreshLock();
@@ -230,6 +274,25 @@ async function refreshValuations() {
   } finally {
     await releaseValuationLock();
   }
+}
+
+// Free floats change on corporate events (a sell-down, a placement), not with
+// the tape, so this runs on its own monthly trigger — `job: "freefloat"` — and
+// never inside the daily breadth scrape: ~960 pages takes ~6 minutes. Each run
+// adds a dated snapshot; the movers estimate picks the one in force per session.
+// No lock: two overlapping runs would write the same dated item twice.
+async function refreshFreeFloat() {
+  console.log(`Fetching free floats for ${IDX_TICKERS.length} codes`);
+  const { floats, count, attempted, usable } = await buildFloatSnapshot(IDX_TICKERS);
+  if (!usable) {
+    console.error(`Free floats: only ${count} of ${attempted} codes answered — snapshot not stored`);
+    return { success: false, message: `Only ${count} of ${attempted} codes returned a float — not stored`, floats: count, attempted };
+  }
+
+  const date = wibDateString();
+  await putFloatSnapshot({ date, floats, attempted });
+  console.log(`Free floats complete: ${date}, ${count} of ${attempted} codes`);
+  return { success: true, message: 'Refreshed free floats', date, floats: count, attempted };
 }
 
 // Market-wide only (not per-ticker), and its own trigger like valuation. Unlike
@@ -287,6 +350,11 @@ export const handler = async (event) => {
         const result = await refreshSentiment();
         return { statusCode: 200, body: JSON.stringify(result) };
       }
+      if (event.job === 'freefloat') {
+        console.log('Scheduled free-float refresh triggered');
+        const result = await refreshFreeFloat();
+        return { statusCode: 200, body: JSON.stringify(result) };
+      }
       console.log('Scheduled refresh triggered');
       const result = await refreshData();
       return { statusCode: 200, body: JSON.stringify(result) };
@@ -342,6 +410,37 @@ export const handler = async (event) => {
         count: snapshot.rows.length,
         data: snapshot.rows,
       }, { cacheable: true });
+    }
+
+    // ~6 minutes, so through API Gateway this returns 504 at 29s while the
+    // Lambda finishes and stores the snapshot — the same as valuation.
+    if (method === 'POST' && (path === '/api/freefloat/refresh' || path === '/api/freefloat/refresh/')) {
+      if (!isRefreshAuthorized(event)) return response(401, { error: 'Unauthorized' });
+      const result = await refreshFreeFloat();
+      return response(200, result);
+    }
+
+    // A date range — or one date, from = to — summed over its sessions. The
+    // dates are path segments, not a query string: CloudFront forwards no
+    // query strings to the API (query_string = false), so ?from= never arrives.
+    const range = method === 'GET' && path.match(/^\/api\/movers\/([^/]+)\/([^/]+)\/?$/);
+    if (range) {
+      const dates = parseRange(range[1], range[2]);
+      if (!dates) return response(400, { error: 'Dates must be YYYY-MM-DD' });
+      const months = monthsSpanned(dates.from, dates.to);
+      // Only about a year is stored; a longer span can only cost reads.
+      if (months.length > MAX_RANGE_MONTHS) return response(400, { error: `Ranges are limited to ${MAX_RANGE_MONTHS} months` });
+      const result = aggregateMovers(await getMoversDays(months), dates.from, dates.to);
+      // An empty range is an answer, not an error — same 200 + success:false as
+      // the other routes use, so the page's console stays clean.
+      if (!result) return response(200, { success: false, message: 'No sessions on record in that range' }, { cacheable: true });
+      return response(200, { success: true, ...result }, { cacheable: true });
+    }
+
+    // Rides along with /api/ad/refresh like the 200-week page — no refresh route.
+    if (method === 'GET' && (path === '/api/movers' || path === '/api/movers/')) {
+      const { updatedAt, floatAsOf, rows } = await getMovers();
+      return response(200, { success: true, updatedAt, floatAsOf, count: rows.length, data: rows }, { cacheable: true });
     }
 
     return response(404, { error: `Not found: ${method} ${path}` });

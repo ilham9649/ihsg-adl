@@ -12,6 +12,9 @@ import { dcfPerShare, residualIncomePerShare, isFinancial, median, trailingTwelv
 import { parseRssItems, mergeHeadlines, wibDateString, filterToday } from './scrapers/news.js';
 import { parseScoreResponse } from './scrapers/sentiment.js';
 import { weeklyCloses, ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
+import { valueOn, capWeights, computeMovers, moversHistoryStart, aggregateMovers, parseRange, monthsSpanned } from './scrapers/movers.js';
+import { parseStat, buildFloatSnapshot, MIN_COVERAGE } from './scrapers/freefloat.js';
+import { HSC_SCHEDULE, hscExcludedOn, FLOAT_OVERRIDES, floatOverrideOn } from './lib/ihsg-rules.js';
 
 // Helper: assert the A/D Line cumulative invariant (adLine is a genuine running
 // sum of spreads, never resets).
@@ -688,5 +691,350 @@ describe('summarizeMa200w — market-wide reading from per-ticker snapshots', ()
     strictEqual(s.universeCount, 0);
     strictEqual(s.pctNear, 0);
     strictEqual(s.pctBelow, 0);
+  });
+});
+
+// ── Index movers (movers.js + ihsg-rules.js) ──
+
+describe('valueOn — the figure in force on a date (share filings, float snapshots)', () => {
+  const filings = [
+    { date: '2024-12-31', value: 100 },
+    { date: '2025-06-30', value: 120 }, // a rights issue
+  ];
+
+  test('takes the latest filing on or before the date', () => {
+    strictEqual(valueOn(filings, '2025-03-01'), 100);
+    strictEqual(valueOn(filings, '2025-06-30'), 120);
+    strictEqual(valueOn(filings, '2026-01-01'), 120);
+  });
+
+  test('a date before the first filing takes that first filing', () => {
+    strictEqual(valueOn(filings, '2023-01-01'), 100);
+  });
+
+  test('no filings yields null', () => {
+    strictEqual(valueOn([], '2025-01-01'), null);
+    strictEqual(valueOn(null, '2025-01-01'), null);
+  });
+});
+
+describe('capWeights — the 9% single-stock cap', () => {
+  const close = (a, b) => ok(Math.abs(a - b) < 1e-9, `${a} ≈ ${b}`);
+
+  test('the excess goes to the uncapped names pro rata', () => {
+    const w = capWeights([0.5, 0.3, 0.2], 0.4);
+    close(w[0], 0.4);
+    close(w[1], 0.36); // 0.3 + 0.1 × 0.3/0.5
+    close(w[2], 0.24);
+  });
+
+  test('repeats when the hand-out pushes another name over', () => {
+    // 0.6 → 0.4 hands 0.2 out; 0.35 grows to 0.525, over the cap in turn.
+    const w = capWeights([0.6, 0.35, 0.05], 0.4);
+    close(w[0], 0.4);
+    close(w[1], 0.4);
+    close(w[2], 0.2);
+    close(w.reduce((a, b) => a + b, 0), 1);
+  });
+
+  test('a cap no weighting could satisfy leaves the weights alone', () => {
+    const w = capWeights([0.5, 0.5], 0.09);
+    strictEqual(w[0], 0.5);
+  });
+});
+
+describe('computeMovers — attributing the index move', () => {
+  // A two-stock index with divisor 1, so its level IS its float market cap:
+  //   A: 100 shares × 50% float × 10 → 11 (+10%)   500 → 550
+  //   B: 200 shares × 100% float × 5 → 4.5 (−10%)  1000 → 900
+  // Index 1500 → 1450. A pushed it +50 points, B −100.
+  const index = [{ date: '2026-10-01', close: 1500 }, { date: '2026-10-02', close: 1450 }];
+  const tickers = [
+    { ticker: 'A', bars: [{ date: '2026-10-01', close: 10 }, { date: '2026-10-02', close: 11 }], shares: [{ date: '2025-12-31', value: 100 }] },
+    { ticker: 'B', bars: [{ date: '2026-10-01', close: 5 }, { date: '2026-10-02', close: 4.5 }], shares: [{ date: '2025-12-31', value: 200 }] },
+  ];
+  const floats = (date, f) => ({ date, floats: f });
+  const opts = { floatSnapshots: [floats('2026-01-01', { A: 0.5, B: 1 })], excludedOn: () => new Set(), floatOn: () => null, weightCap: 1 };
+
+  test('with the true weights, the points add up to the real move exactly', () => {
+    const [day] = computeMovers(index, tickers, opts);
+    strictEqual(day.date, '2026-10-02');
+    strictEqual(day.change, -50);
+    strictEqual(day.estimate, -50);
+    strictEqual(day.up[0].ticker, 'A');
+    strictEqual(day.up[0].pts, 50);
+    strictEqual(day.up[0].pct, 10);
+    strictEqual(day.down[0].ticker, 'B');
+    strictEqual(day.down[0].pts, -100);
+    strictEqual(day.rest, 0);
+    strictEqual(day.counted, 2);
+  });
+
+  test('free float decides the weight, not full market cap', () => {
+    // Full cap would weigh A at 1000 against B's 1000 and call it +75/−75.
+    const [day] = computeMovers(index, tickers, { ...opts, floatSnapshots: [floats('2026-01-01', { A: 1, B: 1 })] });
+    strictEqual(day.up[0].pts, 75);
+    strictEqual(day.down[0].pts, -75);
+  });
+
+  test('a newer float snapshot applies from its own date, not before', () => {
+    // A's float goes 50% → 100% in a snapshot dated 2026-10-01 (the weights' date).
+    const later = [floats('2026-01-01', { A: 0.5, B: 1 }), floats('2026-10-01', { A: 1, B: 1 })];
+    strictEqual(computeMovers(index, tickers, { ...opts, floatSnapshots: later })[0].up[0].pts, 75);
+    const tooLate = [floats('2026-01-01', { A: 0.5, B: 1 }), floats('2026-10-02', { A: 1, B: 1 })];
+    strictEqual(computeMovers(index, tickers, { ...opts, floatSnapshots: tooLate })[0].up[0].pts, 50);
+  });
+
+  test('sessions before the first snapshot take the earliest one', () => {
+    const [day] = computeMovers(index, tickers, { ...opts, floatSnapshots: [floats('2026-12-01', { A: 0.5, B: 1 })] });
+    strictEqual(day.up[0].pts, 50);
+  });
+
+  test('a code missing from a newer, partial snapshot keeps its last float', () => {
+    const partial = [floats('2026-01-01', { A: 0.5, B: 1 }), floats('2026-09-01', { B: 1 })];
+    strictEqual(computeMovers(index, tickers, { ...opts, floatSnapshots: partial })[0].up[0].pts, 50);
+  });
+
+  test('a code in no snapshot takes the newest snapshot\'s median', () => {
+    // Median of { B: 1, C: 1, D: 0.5 } is 1: A weighs 100 × 1 × 10 = 1000, as B does.
+    const [day] = computeMovers(index, tickers, { ...opts, floatSnapshots: [floats('2026-01-01', { B: 1, C: 1, D: 0.5 })] });
+    strictEqual(day.up[0].pts, 75);
+  });
+
+  test('a dated float correction overrides the table from its own date', () => {
+    // A's correct float is 100%, not the table's 50%: weights 1000 vs 1000.
+    const [day] = computeMovers(index, tickers, { ...opts, floatOn: (t, d) => (t === 'A' && d >= '2026-10-01' ? 1 : null) });
+    strictEqual(day.up[0].pts, 75);
+    const [before] = computeMovers(index, tickers, { ...opts, floatOn: (t, d) => (t === 'A' && d >= '2026-10-02' ? 1 : null) });
+    strictEqual(before.up[0].pts, 50); // weights are set at the PREVIOUS close (10-01): not yet in force
+  });
+
+  test('an HSC stock counts for nothing from its effective date', () => {
+    const [day] = computeMovers(index, tickers, { ...opts, excludedOn: d => new Set(d >= '2026-10-02' ? ['B'] : []) });
+    strictEqual(day.counted, 1);
+    strictEqual(day.down.length, 0);
+    strictEqual(day.up[0].ticker, 'A');
+    strictEqual(day.up[0].pts, 150); // A is the whole index now: 1500 × 100% × +10%
+  });
+
+  test('a halted stock keeps its last close: in the weights, moving nothing', () => {
+    const halted = [tickers[0], { ...tickers[1], bars: [tickers[1].bars[0]] }];
+    const [day] = computeMovers(index, halted, opts);
+    strictEqual(day.counted, 2);
+    strictEqual(day.estimate, 50); // only A moved; B still holds two-thirds of the weight
+    strictEqual(day.down.length, 0);
+  });
+
+  test('a close older than 30 days is not carried forward', () => {
+    const idx = [{ date: '2026-10-01', close: 1500 }, { date: '2026-11-15', close: 1500 }];
+    const stale = [{ ticker: 'A', bars: [{ date: '2026-08-01', close: 10 }], shares: [{ date: '2025-12-31', value: 100 }] }];
+    strictEqual(computeMovers(idx, stale, opts).length, 0);
+  });
+
+  test('a ticker without a share count is left out, not guessed', () => {
+    const [day] = computeMovers(index, [tickers[0], { ...tickers[1], shares: [] }], opts);
+    strictEqual(day.counted, 1);
+  });
+
+  test('keeps only the last `sessions`, oldest first, with at most perSide a side', () => {
+    const many = Array.from({ length: 6 }, (_, i) => ({
+      ticker: 'T' + i,
+      bars: index.map((b, k) => ({ date: b.date, close: k ? 10 + i : 10 })),
+      shares: [{ date: '2025-01-01', value: 100 }],
+    }));
+    const longIndex = [{ date: '2026-09-30', close: 1500 }, ...index];
+    const days = computeMovers(longIndex, many, { ...opts, sessions: 1, perSide: 2, floatSnapshots: [floats('2025-01-01', {})] });
+    strictEqual(days.length, 1);
+    strictEqual(days[0].date, '2026-10-02');
+    strictEqual(days[0].up.length, 2);
+    strictEqual(days[0].up[0].ticker, 'T5');
+    // Shown + rest always adds back to the estimate.
+    const shown = days[0].up.reduce((s, m) => s + m.pts, 0);
+    ok(Math.abs(shown + days[0].rest - days[0].estimate) < 0.02);
+  });
+});
+
+describe('moversHistoryStart — how much history the estimate needs', () => {
+  test('the session before the window, less the 30-day carry-forward', () => {
+    const bars = ['2026-10-01', '2026-10-02', '2026-10-05'].map(date => ({ date, close: 1 }));
+    strictEqual(moversHistoryStart(bars, 1), '2026-09-02'); // 2026-10-02 − 30 days
+    strictEqual(moversHistoryStart([], 1), null);
+  });
+});
+
+describe('hscExcludedOn — IHSG membership by date', () => {
+  test('nothing is excluded before the first review takes effect', () => {
+    strictEqual(hscExcludedOn('2026-10-30').size, 0);
+  });
+
+  test('BREN, DSSA and BYAN leave the index on 2026-11-02', () => {
+    const out = hscExcludedOn('2026-11-02');
+    ok(out.has('BREN') && out.has('DSSA') && out.has('BYAN'));
+    ok(!out.has('BBCA'));
+  });
+
+  test('a later review replaces the list rather than adding to it', () => {
+    const schedule = [{ from: '2026-11-02', tickers: ['X', 'Y'] }, { from: '2027-02-01', tickers: ['Y'] }];
+    strictEqual(hscExcludedOn('2026-12-01', schedule).has('X'), true);
+    strictEqual(hscExcludedOn('2027-02-01', schedule).has('X'), false);
+  });
+
+  test('the schedule is in date order with no duplicate codes', () => {
+    for (let i = 1; i < HSC_SCHEDULE.length; i++) ok(HSC_SCHEDULE[i - 1].from < HSC_SCHEDULE[i].from);
+    for (const { tickers } of HSC_SCHEDULE) strictEqual(new Set(tickers).size, tickers.length);
+  });
+});
+
+describe('floatOverrideOn — dated free-float corrections', () => {
+  test('applies from its date, falls back to the table before the first entry', () => {
+    const overrides = { X: [{ from: '2026-01-01', ratio: 0.1 }, { from: '2026-06-08', ratio: 0.25 }] };
+    strictEqual(floatOverrideOn('X', '2025-12-31', overrides), null);
+    strictEqual(floatOverrideOn('X', '2026-03-01', overrides), 0.1);
+    strictEqual(floatOverrideOn('X', '2026-06-08', overrides), 0.25);
+    strictEqual(floatOverrideOn('Y', '2026-06-08', overrides), null);
+  });
+
+  test('TPIA carries its June 2026 sell-down', () => {
+    strictEqual(floatOverrideOn('TPIA', '2026-03-06'), 0.109);
+    strictEqual(floatOverrideOn('TPIA', '2026-10-01'), 0.257);
+  });
+
+  test('a null step hands the code back to the snapshots', () => {
+    const overrides = { X: [{ from: '2026-01-01', ratio: 0.1 }, { from: '2026-12-01', ratio: null }] };
+    strictEqual(floatOverrideOn('X', '2026-06-01', overrides), 0.1);
+    strictEqual(floatOverrideOn('X', '2026-12-01', overrides), null);
+  });
+
+  test('every correction is in date order and a ratio in (0, 1], or null', () => {
+    for (const entries of Object.values(FLOAT_OVERRIDES)) {
+      for (let i = 0; i < entries.length; i++) {
+        ok(entries[i].ratio === null || (entries[i].ratio > 0 && entries[i].ratio <= 1));
+        if (i) ok(entries[i - 1].from < entries[i].from);
+      }
+    }
+  });
+});
+
+describe('parseStat — reading a stockanalysis statistics page', () => {
+  const html = 'x{id:"sharesout",title:"Shares Outstanding",value:"122.84B",hover:"122,841,751,300"},' +
+    '{id:"float",title:"Float",value:"48.61B",hover:"48,610,141,397"},{id:"shortFloat",title:"Short % of Float",value:"n/a",hover:"n/a"}';
+
+  test('reads the unabbreviated figure', () => {
+    strictEqual(parseStat(html, 'float'), 48610141397);
+    strictEqual(parseStat(html, 'sharesout'), 122841751300);
+  });
+
+  test('n/a or a missing statistic is null, not 0', () => {
+    strictEqual(parseStat(html, 'shortFloat'), null);
+    strictEqual(parseStat(html, 'employees'), null);
+  });
+});
+
+describe('buildFloatSnapshot — one run of the monthly job', () => {
+  const run = (codes, ratios) => buildFloatSnapshot(codes, { fetchRatio: async c => ratios[c] ?? null, delayMs: 0 });
+
+  test('rounds to 0.1%, caps at 100%, and skips codes without a figure', async () => {
+    const snap = await run(['A', 'B', 'C'], { A: 0.39571, B: 1.2 });
+    strictEqual(snap.floats.A, 0.396);
+    strictEqual(snap.floats.B, 1);
+    ok(!('C' in snap.floats));
+    strictEqual(snap.count, 2);
+    strictEqual(snap.attempted, 3);
+  });
+
+  test('a code whose fetch throws is skipped, not fatal', async () => {
+    const snap = await buildFloatSnapshot(['A', 'B'], {
+      fetchRatio: async c => { if (c === 'A') throw new Error('timeout'); return 0.5; },
+      delayMs: 0,
+    });
+    strictEqual(snap.count, 1);
+  });
+
+  test('too few answers is not worth storing — a blocked run must not become a snapshot', async () => {
+    const codes = Array.from({ length: 10 }, (_, i) => 'T' + i);
+    const ratios = Object.fromEntries(codes.slice(0, Math.ceil(MIN_COVERAGE * 10) - 1).map(c => [c, 0.3]));
+    strictEqual((await run(codes, ratios)).usable, false);
+    ratios[codes[9]] = 0.3;
+    strictEqual((await run(codes, ratios)).usable, true);
+    strictEqual((await run([], {})).usable, false);
+  });
+});
+
+describe('aggregateMovers — a date range', () => {
+  // Three sessions of a two-stock index. The IHSG closes 1000 → 1010 → 990 → 1005.
+  const days = [
+    { date: '2026-10-01', close: 1010, change: 10, pct: 1, estimate: 10, counted: 2, m: { A: [8, 2], B: [2, 1] } },
+    { date: '2026-10-02', close: 990, change: -20, pct: -1.98, estimate: -21, counted: 2, m: { A: [-15, -3], B: [-6, -2] } },
+    { date: '2026-10-05', close: 1005, change: 15, pct: 1.52, estimate: 15, counted: 2, m: { A: [12, 2.5], B: [3, 1] } },
+  ];
+
+  test('points add across sessions; the real move telescopes from the close before the first', () => {
+    const r = aggregateMovers(days, '2026-10-01', '2026-10-05');
+    strictEqual(r.sessions, 3);
+    strictEqual(r.change, 5);   // 1005 − 1000
+    strictEqual(r.pct, 0.5);
+    strictEqual(r.estimate, 4); // 10 − 21 + 15
+    strictEqual(r.up[0].ticker, 'A');
+    strictEqual(r.up[0].pts, 5);
+    strictEqual(r.down[0].ticker, 'B');
+    strictEqual(r.down[0].pts, -1);
+    strictEqual(r.rest, 0);
+  });
+
+  test('a stock\'s own move compounds over the range', () => {
+    const r = aggregateMovers(days, '2026-10-01', '2026-10-05');
+    strictEqual(r.up[0].pct, 1.41); // 1.02 × 0.97 × 1.025 − 1
+  });
+
+  test('only sessions inside the range count, and the range reports its actual sessions', () => {
+    const r = aggregateMovers(days, '2026-09-28', '2026-10-03'); // a weekend at each end
+    strictEqual(r.from, '2026-10-01');
+    strictEqual(r.to, '2026-10-02');
+    strictEqual(r.sessions, 2);
+    strictEqual(r.change, -10); // 990 − 1000
+  });
+
+  test('one date is a range of one session', () => {
+    const r = aggregateMovers(days, '2026-10-02', '2026-10-02');
+    strictEqual(r.change, -20);
+    strictEqual(r.down[0].ticker, 'A');
+    strictEqual(r.down[0].pct, -3);
+  });
+
+  test('no session in range is null, not an empty result', () => {
+    strictEqual(aggregateMovers(days, '2026-11-01', '2026-11-30'), null);
+  });
+
+  test('one session of computeMovers reads the same as its own top five', () => {
+    const index = [{ date: '2026-10-01', close: 1500 }, { date: '2026-10-02', close: 1450 }];
+    const tickers = [
+      { ticker: 'A', bars: [{ date: '2026-10-01', close: 10 }, { date: '2026-10-02', close: 11 }], shares: [{ date: '2025-12-31', value: 100 }] },
+      { ticker: 'B', bars: [{ date: '2026-10-01', close: 5 }, { date: '2026-10-02', close: 4.5 }], shares: [{ date: '2025-12-31', value: 200 }] },
+    ];
+    const [day] = computeMovers(index, tickers, {
+      floatSnapshots: [{ date: '2026-01-01', floats: { A: 0.5, B: 1 } }], excludedOn: () => new Set(), floatOn: () => null, weightCap: 1,
+    });
+    const r = aggregateMovers([day], day.date, day.date, 5);
+    strictEqual(r.change, day.change);
+    strictEqual(r.pct, day.pct);
+    strictEqual(JSON.stringify(r.up), JSON.stringify(day.up));
+    strictEqual(JSON.stringify(r.down), JSON.stringify(day.down));
+  });
+});
+
+describe('parseRange and monthsSpanned — reading a range request', () => {
+  test('accepts real dates, and puts a reversed pair in order', () => {
+    strictEqual(JSON.stringify(parseRange('2026-03-31', '2026-01-02')), '{"from":"2026-01-02","to":"2026-03-31"}');
+  });
+
+  test('rejects anything that is not a real YYYY-MM-DD date', () => {
+    strictEqual(parseRange('2026-13-01', '2026-01-01'), null);
+    strictEqual(parseRange('2026-02-30', '2026-03-01'), null);
+    strictEqual(parseRange('yesterday', '2026-03-01'), null);
+  });
+
+  test('lists every month a range touches, across a year end', () => {
+    strictEqual(monthsSpanned('2025-11-15', '2026-02-03').join(), '2025-11,2025-12,2026-01,2026-02');
+    strictEqual(monthsSpanned('2026-05-01', '2026-05-31').join(), '2026-05');
   });
 });
