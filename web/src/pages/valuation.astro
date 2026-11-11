@@ -1,0 +1,129 @@
+---
+import Base from '../layouts/Base.astro';
+import '../styles/valuation.css';
+---
+<Base title="Valuation" current="valuation"
+  description="The IDX listing ranked cheapest to dearest by estimated intrinsic value — a DCF for operating companies, excess return for banks and insurers.">
+
+  <div class="wrap">
+    <header class="page-head">
+      <div class="kicker">Valuation · <span id="valued-count">—</span> of <span id="attempted-count">—</span> companies valued</div>
+      <h1>What the listing is worth</h1>
+      <p class="dek">Every company its accounts let us value, ranked by the gap between its price and an estimate of
+        intrinsic worth. These figures rank; they do not price.</p>
+    </header>
+
+    <section class="hero" aria-label="The board at a glance">
+      <p class="finding" id="spread-finding">Reading the record…</p>
+      <div class="tiles">
+        <div class="tile"><div class="tile-label">Below their worth</div><div class="tile-value up" id="n-cheap">—</div><div class="tile-note">Price under the estimate</div></div>
+        <div class="tile"><div class="tile-label">Above their worth</div><div class="tile-value down" id="n-dear">—</div><div class="tile-note">Price over a positive estimate</div></div>
+        <div class="tile"><div class="tile-label">No value</div><div class="tile-value down" id="n-void">—</div><div class="tile-note">Debt or low returns outweigh it</div></div>
+        <div class="tile"><div class="tile-label">Median gap</div><div class="tile-value" id="median-gap">—</div><div class="tile-note">Middle company, worth vs price</div></div>
+        <div class="tile"><div class="tile-label">Cash-flow model</div><div class="tile-value" id="n-dcf">—</div><div class="tile-note">Operating companies (DCF)</div></div>
+        <div class="tile"><div class="tile-label">Excess return</div><div class="tile-value" id="n-ri">—</div><div class="tile-note">Banks and insurers</div></div>
+      </div>
+    </section>
+
+    <section class="figure" aria-labelledby="spread-title">
+      <div class="figure-head">
+        <span class="figure-no">Fig. I</span>
+        <h2 id="spread-title">The spread of worth</h2>
+      </div>
+      <p class="figure-dek">One hairline per company, placed by how many doublings separate its price from its estimated
+        worth. Hover or tap a mark to read its company.</p>
+      <figure style="margin:0">
+        <figcaption class="spread-readout" id="spread-readout" aria-live="polite">
+          <span class="readout-label">Median company</span>
+          <span class="readout-body">Reading the record…</span>
+        </figcaption>
+        <div class="spread-ends"><span class="cheap">Cheap</span><span class="dear">Dear</span></div>
+        <div class="spread-frame">
+          <svg id="spread-strip" viewBox="0 0 1000 150" preserveAspectRatio="none" role="img" aria-labelledby="spread-alt"></svg>
+          <p id="spread-alt" class="visually-hidden"></p>
+          <div class="spread-axis" id="spread-axis" aria-hidden="true"></div>
+        </div>
+      </figure>
+      <details class="how">
+        <summary>How to read this</summary>
+        <p>The scale doubles at every step, because the gap runs from a few percent to several times over. Left of the
+          fair-value line the company costs less than its estimate; right of it, more. The solid block past the break
+          holds companies whose estimate is under a sixtieth of their price — in effect worth nothing — and is the
+          biggest single group on the board. Filtering the tables below lights up the matching marks.</p>
+      </details>
+    </section>
+  </div>
+
+  <div class="toolbar">
+    <div class="wrap">
+      <span class="toolbar-label" id="model-label">Model</span>
+      <div class="segmented" id="model" role="group" aria-labelledby="model-label">
+        <button type="button" data-model="all" aria-pressed="true">All</button>
+        <button type="button" data-model="dcf" aria-pressed="false">DCF</button>
+        <button type="button" data-model="residual-income" aria-pressed="false">Financials</button>
+      </div>
+      <span class="spacer"></span>
+      <input type="search" id="search-input" class="search" placeholder="Ticker or company…" aria-label="Filter by ticker or company name">
+    </div>
+  </div>
+
+  <div class="wrap">
+    <section class="figure" aria-label="Rankings">
+      <div class="tabs-head">
+        <div class="tabs" role="tablist" aria-label="Choose a table">
+          <button type="button" role="tab" id="tab-a" aria-pressed="true" aria-selected="true" aria-controls="panel-a">Cheapest to dearest</button>
+          <button type="button" role="tab" id="tab-b" aria-pressed="false" aria-selected="false" aria-controls="panel-b">What it pays vs. what it's worth</button>
+        </div>
+      </div>
+
+      <div id="panel-a" role="tabpanel" aria-labelledby="tab-a">
+        <div class="table-tools">
+          <p class="figure-dek" style="margin:0">Widest discounts first. Click a heading to re-sort; hover one for what it measures.</p>
+          <span class="table-count" id="row-count"></span>
+        </div>
+        <div class="table-wrap"><table id="data-table" class="data-table"></table></div>
+        <div class="table-more"><button type="button" class="btn" id="row-more" hidden>Show all</button></div>
+      </div>
+
+      <div id="panel-b" role="tabpanel" aria-labelledby="tab-b" hidden>
+        <div class="table-tools">
+          <p class="figure-dek" style="margin:0">The same companies valued again from dividends actually paid. A wide gap means
+            it keeps far more than it pays out — a reading, not an error.</p>
+          <span class="table-count" id="ddm-count"></span>
+        </div>
+        <div class="table-wrap"><table id="ddm-table" class="data-table"></table></div>
+        <div class="table-more"><button type="button" class="btn" id="ddm-more" hidden>Show all</button></div>
+      </div>
+    </section>
+
+    <section class="figure" aria-labelledby="method-title">
+      <div class="figure-head">
+        <span class="figure-no">Method</span>
+        <h2 id="method-title">Terms of the estimate</h2>
+      </div>
+      <dl class="method">
+        <div><dt>Discount rate</dt><dd><b>13%</b> on every company — the Indonesian ten-year yield plus an equity risk
+          premium. One rate for all, which treats a utility and a mining junior as equally risky. They are not.</dd></div>
+        <div><dt>Growth</dt><dd><b>Five years</b>, then <b>4%</b> forever. Operating companies grow at their own revenue
+          rate, capped at 15%; financials at what they retain from earnings.</dd></div>
+        <div><dt>Cash flow</dt><dd>The <b>median</b> of the filed years, never the latest. One asset sale must not become a
+          perpetuity.</dd></div>
+        <div><dt>Accounts</dt><dd>The <b>last four quarters</b> where a company files them cleanly, the last full
+          <b>financial year</b> otherwise. Every row prints the period it rests on.</dd></div>
+      </dl>
+      <div class="prose-cols">
+        <p><b>Operating companies</b> are valued on a two-stage DCF: five years of free cash flow, a closing value for
+          everything after, debt subtracted and cash added to reach what the shareholders own.</p>
+        <p><b>Banks and insurers</b> cannot be. Their reported free cash flow is deposit and lending flow — the balance
+          sheet, not the business. They are valued on excess return instead: book value, plus whatever they earn above
+          their cost of equity. Which model a company gets is decided by its Yahoo Finance sector.</p>
+        <p><b>Companies are missing</b> when they lose money, file nothing, or carry no sector. Without the sector we
+          cannot tell which model applies, and a wrong model is worse than no number.</p>
+        <p><b>The dividend table</b> is a cross-check, not a third model. Only companies with a dividend history and a
+          positive main estimate appear in it.</p>
+      </div>
+    </section>
+  </div>
+
+  <script src="../lib/valuation.js"></script>
+</Base>

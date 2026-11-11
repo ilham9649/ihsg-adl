@@ -30,7 +30,12 @@ export function setFreshness(date, { staleAfter = 4, label = 'Data' } = {}) {
   const age = ageInDays(date);
   const stale = age > staleAfter;
   el.dataset.state = stale ? 'stale' : 'fresh';
-  el.textContent = stale ? `${label} ${longDate(date)} · ${age}d old` : `${label} ${longDate(date)}`;
+  // Two parts, so a phone can drop the date and keep what matters: the age.
+  const when = document.createElement('span');
+  when.className = 'fresh-date';
+  when.textContent = `${label} ${longDate(date)}` + (stale ? ' · ' : '');
+  if (stale) el.replaceChildren(when, `${age}d old`);
+  else el.replaceChildren(when);
   el.title = stale ? `The latest reading is ${age} days old — it has stopped updating.` : 'Up to date';
 }
 
@@ -50,7 +55,8 @@ export function debounce(fn, ms = 200) {
 // A tiny inline-SVG sparkline: one path, coloured by whether the last value
 // sits above or below `ref`. Built with DOM calls, no markup strings.
 const SVG = 'http://www.w3.org/2000/svg';
-export function sparkline(svg, values, { ref = null } = {}) {
+// `invert` for readings where higher is worse (the share below a line).
+export function sparkline(svg, values, { ref = null, invert = false } = {}) {
   const vals = values.filter(v => v != null);
   svg.replaceChildren();
   if (vals.length < 2) return;
@@ -72,7 +78,8 @@ export function sparkline(svg, values, { ref = null } = {}) {
     svg.appendChild(base);
   }
   const last = vals[vals.length - 1];
-  const up = ref != null ? last >= ref : last >= vals[0];
+  const rising = ref != null ? last >= ref : last >= vals[0];
+  const up = invert ? !rising : rising;
   const path = document.createElementNS(SVG, 'path');
   path.setAttribute('d', vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(''));
   path.setAttribute('fill', 'none');
