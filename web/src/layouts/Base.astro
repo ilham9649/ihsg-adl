@@ -1,0 +1,83 @@
+---
+// The one page shell every section shares: head, sticky header, footer.
+// Adding a section means adding it to SECTIONS — nothing else repeats.
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  description: string;
+  current: 'breadth' | 'valuation' | 'sentiment' | 'trend';
+}
+const { title, description, current } = Astro.props;
+
+const SECTIONS = [
+  { id: 'breadth', href: '/', name: 'Breadth & Momentum' },
+  { id: 'valuation', href: '/valuation.html', name: 'Valuation' },
+  { id: 'sentiment', href: '/sentiment.html', name: 'Sentiment' },
+  { id: 'trend', href: '/ma200w.html', name: 'Trend Line' },
+];
+const fullTitle = `${title} — The Jakarta Ledger`;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{fullTitle}</title>
+  <meta name="description" content={description}>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'">
+  <link rel="canonical" href={canonical}>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#f7f3ea">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="The Jakarta Ledger">
+  <meta property="og:title" content={fullTitle}>
+  <meta property="og:description" content={description}>
+  <meta property="og:url" content={canonical}>
+  <meta name="twitter:card" content="summary">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400..500&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+</head>
+<body>
+  <a class="visually-hidden" href="#main">Skip to content</a>
+  <header class="site-bar">
+    <div class="wrap">
+      <a class="wordmark" href="/">The Jakarta Ledger</a>
+      <nav class="site-nav" aria-label="Sections">
+        {SECTIONS.map(s => (
+          <a href={s.href} aria-current={s.id === current ? 'page' : undefined}>{s.name}</a>
+        ))}
+      </nav>
+      <span class="freshness" id="freshness" role="status">Loading…</span>
+    </div>
+  </header>
+
+  <main id="main">
+    <slot />
+  </main>
+
+  <footer class="site-foot">
+    <div class="wrap foot-grid">
+      <div>
+        <p class="foot-brand">The Jakarta Ledger</p>
+        <p>A daily reading of the Jakarta market: breadth, value, sentiment and trend across the full IDX listing.
+          Estimates and readings, not advice — neither a recommendation to buy nor to sell.</p>
+      </div>
+      <div>
+        <h4>Sections</h4>
+        <ul>{SECTIONS.map(s => <li><a href={s.href}>{s.name}</a></li>)}</ul>
+      </div>
+      <div>
+        <h4>Data</h4>
+        <ul>
+          <li>Prices and accounts from Yahoo Finance, tallied after the 17:00 WIB close</li>
+          <li>Headlines from CNBC Indonesia, Kontan and Detik Finance</li>
+          <li class="mono">finance.sulaksono.id</li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
