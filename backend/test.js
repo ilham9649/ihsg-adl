@@ -873,6 +873,16 @@ describe('hscExcludedOn — IHSG membership by date', () => {
     ok(!out.has('BBCA'));
   });
 
+  test('the 13 Nov list adds 302 codes and keeps all 81 earlier ones', () => {
+    const before = hscExcludedOn('2026-11-12');
+    const after = hscExcludedOn('2026-11-13');
+    strictEqual(before.size, 81);
+    strictEqual(after.size, 383);
+    for (const code of before) ok(after.has(code), code);
+    ok(!before.has('BRIS') && after.has('BRIS') && after.has('PANI'));
+    ok(!after.has('BBCA') && !after.has('BBRI'));
+  });
+
   test('a later review replaces the list rather than adding to it', () => {
     const schedule = [{ from: '2026-11-02', tickers: ['X', 'Y'] }, { from: '2027-02-01', tickers: ['Y'] }];
     strictEqual(hscExcludedOn('2026-12-01', schedule).has('X'), true);
