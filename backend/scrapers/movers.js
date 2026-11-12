@@ -125,13 +125,21 @@ export function moversHistoryStart(indexBars, sessions = MOVERS_SESSIONS) {
  *   its float from the latest snapshot that has it, so a partial snapshot
  *   doesn't drop anyone.
  *
+ * sectorOf: { code: sector } — when given, each session also carries
+ *   `sectors`, { sector: [weightBp, pts] }: the sector's share of the index
+ *   going in (basis points) and the points it moved it. Its own return is
+ *   pts / (previous close × weight) — what the rotation map is built from.
+ *   Codes with no known sector are pooled as "Other".
+ *
  * Returns, oldest first:
- *   { date, close, change, pct, estimate, up, down, rest, counted, m }
+ *   { date, close, change, pct, estimate, up, down, rest, counted, m, sectors? }
  * change/pct are the REAL move and close the IHSG's close; estimate is what
  * the weights add up to; up and down are the biggest lifters and draggers
  * ({ ticker, pts, pct }); rest is the net of every other constituent, so
- * up + down + rest = estimate. m holds EVERY constituent that moved the index
- * by at least 0.01 points, { ticker: [pts, pct] }, for aggregateMovers.
+ * up + down + rest = estimate. m holds every constituent that moved the index
+ * by at least 0.01 points OR weighs at least 1bp, { ticker: [pts, pct, weightBp] }
+ * — the heatmap needs the heavyweights that sat still, and aggregateMovers
+ * reads only the first two fields.
  */
 export function computeMovers(indexBars, tickers, {
   sessions = MOVERS_SESSIONS,
@@ -140,6 +148,7 @@ export function computeMovers(indexBars, tickers, {
   excludedOn = hscExcludedOn,
   floatOn = floatOverrideOn,
   weightCap = WEIGHT_CAP,
+  sectorOf = null,
 } = {}) {
   const cal = indexBars.filter(b => b.close > 0).slice(-(sessions + 1));
   if (cal.length < 2) return [];
@@ -182,9 +191,25 @@ export function computeMovers(indexBars, tickers, {
 
     const entries = rows.map(r => ({ ticker: r.ticker, pts: r.pts, pct: r.ret * 100 }));
     const m = {};
-    for (const e of entries) {
+    entries.forEach((e, i) => {
       const pts = round2(e.pts);
-      if (pts !== 0) m[e.ticker] = [pts, round2(e.pct)];
+      const bp = round2(weights[i] * 1e4);
+      if (pts !== 0 || bp >= 1) m[e.ticker] = [pts, round2(e.pct), bp];
+    });
+
+    let sectors;
+    if (sectorOf) {
+      const acc = {};
+      rows.forEach((r, i) => {
+        const name = sectorOf[r.ticker] || 'Other';
+        const s = acc[name] || (acc[name] = [0, 0]);
+        s[0] += weights[i] * 1e4;
+        s[1] += r.pts;
+      });
+      sectors = {};
+      // Four places: a small sector's daily return is pts / (close × weight),
+      // and rounding either side to 2dp would swamp it.
+      for (const [name, [bp, pts]] of Object.entries(acc)) sectors[name] = [round2(bp), Math.round(pts * 1e4) / 1e4];
     }
 
     days.push({
@@ -196,6 +221,7 @@ export function computeMovers(indexBars, tickers, {
       ...rankMovers(entries, estimate, perSide),
       counted: rows.length,
       m,
+      ...(sectors && { sectors }),
     });
   }
   return days;
