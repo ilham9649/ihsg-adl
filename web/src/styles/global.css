@@ -467,3 +467,5 @@ button, input, select { font: inherit; color: inherit; }
 .movers-cols.neutral .movers-col-head { color: var(--ink-soft) !important; }
 .chart canvas { cursor: crosshair; }
 .movers-cols.neutral .mv-code { color: var(--ink) !important; }
+/* An index level has more digits than a percentage: a size that fits its column. */
+.hero-figure.index { font-size: clamp(2.4rem, 4.6vw, 3.6rem); letter-spacing: -.03em; }
