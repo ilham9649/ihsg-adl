@@ -2,38 +2,34 @@
 import Base from '../layouts/Base.astro';
 import Figure from '../components/Figure.astro';
 
-const PERIODS = [
-  ['7', '1W'], ['30', '1M'], ['90', '3M'], ['126', '6M'],
-  ['ytd', 'YTD'], ['252', '1Y'], ['756', '3Y'], ['0', 'All'],
-];
 const TILES = [
-  { id: 'advances', label: 'Advancing', note: 'Closed above yesterday' },
-  { id: 'declines', label: 'Declining', note: 'Closed below yesterday' },
-  { id: 'unchanged', label: 'Unchanged', note: 'Flat, or never traded' },
-  { id: 'ratio', label: 'A / D ratio', note: 'Risers per faller · 1.00 is even' },
-  { id: 'spread', label: 'Net spread', note: 'Risers minus fallers' },
-  { id: 'mcclellan', label: 'McClellan', note: '19 less 39-day EMA of the spread' },
+  { id: 'advances', label: 'Advancing', note: 'Closed above the session before', spark: true },
+  { id: 'declines', label: 'Declining', note: 'Closed below the session before', spark: true },
+  { id: 'ratio', label: 'A / D ratio', note: 'Risers per faller · 1.00 is even', spark: true },
+  { id: 'lifter', label: 'Biggest lifter', note: '—' },
+  { id: 'dragger', label: 'Biggest dragger', note: '—' },
+  { id: 'estimate', label: 'Our estimate', note: '—' },
 ];
 ---
-<Base title="Breadth & Momentum" current="breadth"
-  description="A daily reading of the Jakarta Composite Index (IHSG) — market breadth, momentum and index price across the full IDX listing.">
+<Base title="Market Map" current="map"
+  description="One trading session of the Jakarta Composite Index (IHSG) at a time: which stocks moved it, a map of every index stock, the top lists and sector rotation.">
 
   <div class="wrap">
     <header class="page-head">
-      <div class="kicker">Breadth &amp; Momentum · <span id="universe-count">~950</span> stocks counted</div>
-      <h1>How many rose, and how the index moved</h1>
-      <p class="dek">Breadth counts how <em>many</em> stocks rose, not how far the index moved. Above 50% the advance is broad;
-        below it, a handful of heavyweights carry the index while the rest retreat.</p>
+      <div class="kicker">Market Map · one session at a time</div>
+      <h1>What moved the Jakarta market</h1>
+      <p class="dek">Pick any session of the last year — with the date control below, or by clicking a candle — and read
+        which stocks moved the IHSG, how every index stock fared, and where each sector stands against the whole.</p>
     </header>
 
-    <section class="hero" aria-label="Latest session">
+    <section class="hero" aria-label="The session on show">
       <div class="hero-lead">
-        <div class="hero-label">% Advancing · <span id="hero-date">latest session</span></div>
-        <div class="hero-figure" id="pct-advancing">—</div>
-        <div class="hero-verdict" id="pct-verdict">Awaiting count</div>
+        <div class="hero-label">IHSG close · <span id="hero-date">latest session</span></div>
+        <div class="hero-figure index" id="hero-close">—</div>
+        <div class="hero-verdict" id="hero-move">Awaiting the session</div>
         <dl class="hero-meta">
-          <div><dt>20-day trend</dt><dd id="pct-advancing-ma">—</dd></div>
-          <div><dt>On record</dt><dd><span id="pct-percentile">—</span> pctile</dd></div>
+          <div><dt>Day's range</dt><dd id="hero-range">—</dd></div>
+          <div><dt>% Advancing</dt><dd><a href="/breadth.html" id="hero-pctadv">—</a></dd></div>
         </dl>
       </div>
       <div class="tiles">
@@ -41,8 +37,8 @@ const TILES = [
           <div class="tile">
             <div class="tile-label">{t.label}</div>
             <div class="tile-value" id={t.id}>—</div>
-            <svg class="tile-spark" id={`${t.id}-spark`} aria-hidden="true"></svg>
-            <div class="tile-note">{t.note}</div>
+            {t.spark && <svg class="tile-spark" id={`${t.id}-spark`} aria-hidden="true"></svg>}
+            <div class="tile-note" id={t.spark ? undefined : `${t.id}-note`}>{t.note}</div>
           </div>
         ))}
       </div>
@@ -51,13 +47,8 @@ const TILES = [
 
   <div class="toolbar">
     <div class="wrap">
-      <span class="toolbar-label" id="period-label">Period</span>
-      <div class="segmented" id="period" role="group" aria-labelledby="period-label">
-        {PERIODS.map(([v, l]) => <button type="button" data-range={v} aria-pressed={v === '252' ? 'true' : 'false'}>{l}</button>)}
-      </div>
-      <span class="spacer"></span>
-      <!-- The session on show: drives the headline, tiles, Who moved it, the
-           session map and the rotation. Click any candle to pick one too. -->
+      <!-- The session on show: drives the headline, the tiles, Who moved it,
+           the session map and the rotation. Click any candle to pick one too. -->
       <div class="session-nav" role="group" aria-label="Session on show">
         <span class="toolbar-label" id="session-label">Session</span>
         <button type="button" class="movers-btn" id="session-prev" aria-label="Previous session">‹</button>
@@ -117,7 +108,7 @@ const TILES = [
       </div>
       <Fragment slot="how">
         <p>The body of each candle spans open to close, the wick the day's full range. Green closed up, red closed
-          down. The breadth panels below check the index against everyone else.</p>
+          down. The <a href="/breadth.html">Breadth &amp; Momentum</a> page checks the index against everyone else.</p>
       </Fragment>
     </Figure>
 
@@ -158,81 +149,7 @@ const TILES = [
           relative, not as IDX's official sector indices.</p>
       </Fragment>
     </Figure>
-
-    <Figure no="Fig. IV" title="The breadth line" chart="adline"
-      dek="The share of stocks that closed higher, one vote each — a bank worth billions and a micro-cap count the same. Above 50%, more rose than fell.">
-      <Fragment slot="legend">
-        <label class="legend-chip" style="color:#2f6b4f"><input type="checkbox" data-key="pctAdvancingMA" checked><span class="sw"></span><span>20-day</span></label>
-        <label class="legend-chip" style="color:#a67a26"><input type="checkbox" data-key="pctAdvancingMA100" checked><span class="sw"></span><span>100-day</span></label>
-        <label class="legend-chip" style="color:#3f5170"><input type="checkbox" data-key="pctAdvancingMA200" checked><span class="sw"></span><span>200-day</span></label>
-        <label class="legend-chip" style="color:#8a8275"><input type="checkbox" data-key="daily" checked><span class="sw"></span><span>Daily</span></label>
-      </Fragment>
-      <Fragment slot="how">
-        <p>Single sessions are noisy, so the faint dots are the raw daily readings and the lines are their 20, 100 and
-          200-day averages. The 20-day line is green above the neutral 50% line and red below. Toggle a line off and
-          the scale re-fits to what remains.</p>
-      </Fragment>
-    </Figure>
-
-    <Figure no="Fig. V" title="The Zweig Breadth Thrust" chart="zbt">
-      <Fragment slot="legend">
-        <span class="legend-key"><span class="sw" style="background:#2f6b4f"></span>10-day EMA</span>
-        <span class="legend-key"><span class="tri">▲</span>Jakarta trigger (56%)</span>
-      </Fragment>
-      <Fragment slot="dek">Was a bottom bought by the <em>whole</em> market? A climb from 40% to 56% (Jakarta rule) or 61.5%
-        (Zweig) within ten sessions.</Fragment>
-      <Fragment slot="how">
-        <p>Zweig's 61.5% bar has been cleared <span id="zbt-count">—</span> (peak <span id="zbt-record">—</span>). The
-          ▲ marks the looser Jakarta rule, 56%: <span id="idx-count">—</span>. Six months later the IHSG averaged
-          <span id="idx-after">—</span>, against <span id="idx-base">—</span> on an ordinary day; SPY after Zweig's own
-          triggers, +17.3% against +6.3% (2009–2025). Most Jakarta episodes predate 2014, so read it as a level to
-          watch, not a proven signal.</p>
-      </Fragment>
-    </Figure>
   </div>
 
-  <div class="wrap">
-    <div class="figure-grid">
-      <Figure no="Fig. VI" title="Momentum — Stochastic" chart="stoch" size="short"
-        dek="Where this week's close sits in the last fifteen weeks' range. Below 20 oversold, above 80 overbought.">
-        <Fragment slot="legend">
-          <span class="legend-key"><span class="sw" style="background:#1a1714"></span>%K</span>
-          <span class="legend-key"><span class="sw" style="background:#3f5170"></span>%D</span>
-        </Fragment>
-        <Fragment slot="how">
-          <p>100% means the week finished at the top of its fifteen-week range, 0% at the bottom. %K is the raw
-            reading, %D its three-week average. This one tracks <em>price</em>, not breadth, and runs on weekly bars,
-            so it needs a long reading period to say anything.</p>
-        </Fragment>
-      </Figure>
-      <Figure no="Fig. VII" title="Shinohara intensity" chart="shinohara" size="short"
-        dek="Weak minus Strong over 26 weeks (Yahoo's formula). Above 100 — shaded — is extremely oversold.">
-        <Fragment slot="how">
-          <p>Shinohara measures buying and selling pressure as two ratios; the reading is the <em>gap</em> between
-            them, so the gap itself is plotted. A reading above 100 is rare and historically bullish.</p>
-        </Fragment>
-      </Figure>
-    </div>
-
-    <section class="figure" aria-labelledby="record-title">
-      <div class="figure-head">
-        <span class="figure-no">Tab. A</span>
-        <h2 id="record-title">The daily record</h2>
-      </div>
-      <p class="figure-dek">Every reading above, one row per session. Click a heading to sort; search reaches the whole record, not just the period.</p>
-      <div class="table-tools">
-        <input type="search" id="date-filter" class="search" placeholder="Find a session — 2019, 2026-03…" aria-label="Filter the daily record by date">
-        <span class="table-count" id="record-count"></span>
-      </div>
-      <div class="table-wrap">
-        <table id="data-table" class="data-table">
-          <thead></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <div class="table-more"><button type="button" class="btn" id="record-more" hidden>Show all</button></div>
-    </section>
-  </div>
-
-  <script src="../lib/breadth.js"></script>
+  <script src="../lib/market.js"></script>
 </Base>
