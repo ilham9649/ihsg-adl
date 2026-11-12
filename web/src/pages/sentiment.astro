@@ -1,0 +1,70 @@
+---
+import Base from '../layouts/Base.astro';
+import Figure from '../components/Figure.astro';
+---
+<Base title="Sentiment" current="sentiment"
+  description="A daily, market-wide sentiment reading for the Jakarta market, scored by a language model from Indonesian financial news headlines.">
+
+  <div class="wrap">
+    <header class="page-head">
+      <div class="kicker">Sentiment · <span id="reading-count">—</span> days read</div>
+      <h1>What the headlines are saying</h1>
+      <p class="dek">Each evening a language model reads the day's headlines from three Indonesian financial news feeds
+        and files one number, from −100 (panic) to +100 (euphoria). A first impression of the news, not a measurement
+        of the market.</p>
+    </header>
+
+    <div class="notice" id="stale-notice" hidden role="alert"></div>
+
+    <section class="hero" aria-label="Latest reading">
+      <div class="hero-lead">
+        <div class="hero-label"><span id="hero-kicker">Latest reading</span> · <span id="hero-date">—</span></div>
+        <div class="hero-figure" id="sentiment-score">—</div>
+        <div class="hero-verdict" id="sentiment-verdict">Awaiting the reading</div>
+        <dl class="hero-meta">
+          <div><dt>7-day average</dt><dd id="score-ma">—</dd></div>
+          <div><dt>Headlines read</dt><dd id="headline-count">—</dd></div>
+        </dl>
+      </div>
+      <div class="tiles" style="grid-template-columns: 1fr; align-content: center">
+        <div class="tile" style="border-bottom:0">
+          <div class="tile-label">The day in one line</div>
+          <p class="hero-verdict" id="sentiment-summary" style="margin:10px 0 0; font-style:normal; font-weight:400; font-size:1.3rem; line-height:1.4">Reading the headlines…</p>
+        </div>
+      </div>
+    </section>
+
+    <Figure no="Fig. I" title="The reading over time" chart="sentiment" size="tall"
+      dek="A 7-day trailing average — one read a day is noisy, so the average carries the trend. The faint dots are each day's raw score.">
+      <Fragment slot="legend">
+        <span class="legend-key"><span class="sw" style="background:#2f6b4f"></span>7-day average</span>
+        <span class="legend-key"><span class="sw" style="background:rgba(26,23,20,.3)"></span>Daily score</span>
+      </Fragment>
+      <Fragment slot="how">
+        <p>Green above the neutral line, red below. The live feeds only expose a rolling window, so the first three
+          months were filled in after the fact from search-engine results; from then on the line lengthens by one
+          point a day.</p>
+      </Fragment>
+    </Figure>
+
+    <section class="figure" aria-labelledby="method-title">
+      <div class="figure-head">
+        <span class="figure-no">Method</span>
+        <h2 id="method-title">Terms of the reading</h2>
+      </div>
+      <dl class="method">
+        <div><dt>Source</dt><dd>Three feeds — CNBC Indonesia's market section, Kontan's investasi feed and Detik Finance —
+          each a mix of market news and unrelated stories. The model weighs market-wide news over sector news over a
+          single company's, and ignores what isn't market-relevant.</dd></div>
+        <div><dt>Judge</dt><dd>One call to a language model per day, not an ensemble and not a re-read for consistency.
+          Treat the number as one reader's first impression, not a poll.</dd></div>
+        <div><dt>Window</dt><dd>Whatever the three feeds published that trading day, in Jakarta time — typically several
+          dozen headlines.</dd></div>
+        <div><dt>Limits</dt><dd>The same headlines read twice, or by a different model, would not always file the same
+          number. Not advice, and not a signal.</dd></div>
+      </dl>
+    </section>
+  </div>
+
+  <script src="../lib/sentiment.js"></script>
+</Base>

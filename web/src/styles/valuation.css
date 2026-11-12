@@ -1,0 +1,52 @@
+/* The Valuation page's own figure: one hairline per company on a log scale
+   of worth against price. Everything else on the page uses global.css. */
+
+:root { --oxblood: #7a2a22; }
+
+.spread-readout {
+  display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  min-height: 2.8em; padding-bottom: 12px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.readout-label {
+  font: 600 .68rem/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+  color: var(--ink-faint); white-space: nowrap;
+}
+.readout-body { font: 400 clamp(1.05rem, 2.2vw, 1.4rem)/1.3 var(--display); }
+.readout-body b { font-weight: 700; }
+.cheap { color: var(--up); }
+.dear { color: var(--down); }
+
+.spread-frame { position: relative; margin-top: 14px; }
+#spread-strip { display: block; width: 100%; height: clamp(140px, 20vw, 190px); cursor: crosshair; touch-action: pan-y; }
+#spread-strip .field { animation: press 1s cubic-bezier(.3,.7,.2,1) both .2s; }
+@keyframes press { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@media (prefers-reduced-motion: reduce) { #spread-strip .field { animation: none; } }
+
+/* HTML labels, not SVG text: the strip stretches and would distort lettering. */
+.spread-axis { position: relative; height: 4.4rem; margin-top: 4px; }
+.axis-mark {
+  position: absolute; top: 0; transform: translateX(-50%); text-align: center;
+  font: 600 .66rem/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink-faint); white-space: nowrap;
+}
+.axis-mark.at-start { transform: none; text-align: left; }
+.axis-mark.at-end { transform: translateX(-100%); text-align: right; }
+.axis-mark.anchor { color: var(--ink); }
+.axis-mark.void { color: var(--oxblood); }
+.axis-mark.median { top: 2.6rem; color: var(--gold); }
+.axis-mark em {
+  display: block; margin-top: 3px;
+  font: italic 400 .86rem/1.2 var(--text); letter-spacing: 0; text-transform: none; color: var(--ink-faint);
+}
+
+/* Cheap ← → dear, in words, above the strip's ends. */
+.spread-ends { display: flex; justify-content: space-between; font: 600 .7rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; margin-top: 16px; }
+.spread-ends .cheap::before { content: '← '; }
+.spread-ends .dear::after { content: ' →'; }
+
+@media (max-width: 720px) {
+  .axis-mark em { display: none; }
+  .spread-axis { height: 3.4rem; }
+  .axis-mark.median { top: 1.6rem; }
+}

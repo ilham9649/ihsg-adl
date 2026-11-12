@@ -1,0 +1,34 @@
+---
+// One figure: number, title, optional legend, a one-sentence dek, the chart,
+// and the long explanation folded behind "How to read this".
+interface Props {
+  no: string;
+  title: string;
+  dek?: string;
+  chart?: string;      // id prefix: renders <canvas id="{chart}-chart"> + tooltip
+  size?: 'short' | 'tall' | '';
+}
+const { no, title, dek, chart, size = '' } = Astro.props;
+const hasHow = Astro.slots.has('how');
+---
+<section class="figure" aria-labelledby={chart ? `${chart}-title` : undefined}>
+  <div class="figure-head">
+    <span class="figure-no">{no}</span>
+    <h2 id={chart ? `${chart}-title` : undefined}>{title}</h2>
+    {Astro.slots.has('legend') && <div class="figure-legend"><slot name="legend" /></div>}
+  </div>
+  {Astro.slots.has('dek') ? <p class="figure-dek"><slot name="dek" /></p> : dek && <p class="figure-dek">{dek}</p>}
+  {chart && (
+    <div class={`chart ${size}`}>
+      <canvas id={`${chart}-chart`} role="img" aria-label={`${title} chart`}></canvas>
+      <div class="bc-tip" id={`${chart}-tip`}></div>
+    </div>
+  )}
+  <slot />
+  {hasHow && (
+    <details class="how">
+      <summary>How to read this</summary>
+      <slot name="how" />
+    </details>
+  )}
+</section>
