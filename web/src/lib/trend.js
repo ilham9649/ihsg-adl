@@ -223,15 +223,5 @@ document.querySelectorAll('#band button').forEach(btn => btn.addEventListener('c
 }));
 document.getElementById('search-input').addEventListener('input', debounce(applyFilters, 150));
 document.getElementById('trend-date-filter').addEventListener('input', debounce(renderDays, 150));
-for (const tab of document.querySelectorAll('[role=tab]')) {
-  tab.addEventListener('click', () => {
-    for (const t of document.querySelectorAll('[role=tab]')) {
-      const on = t === tab;
-      t.setAttribute('aria-pressed', String(on));
-      t.setAttribute('aria-selected', String(on));
-      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
-    }
-  });
-}
 
 fetchData();

@@ -41,6 +41,19 @@ import Figure from '../components/Figure.astro';
         dek="Share trading under their own 200-week average. Above 50%, most of the market is." />
     </div>
 
+    <!-- The numbers behind Fig. I and II: one row per day, market-wide. It
+         lists days, not stocks, so it sits with the charts it feeds rather
+         than beside the stock table and its filters. -->
+    <details class="how numbers">
+      <summary>Show the numbers, day by day</summary>
+      <div class="table-tools" style="margin-top:14px">
+        <input type="search" id="trend-date-filter" class="search" placeholder="Find a day — 2026-03…" aria-label="Filter the daily record by date">
+        <span class="table-count" id="trend-count"></span>
+      </div>
+      <div class="table-wrap"><table id="trend-table" class="data-table no-toolbar"></table></div>
+      <div class="table-more"><button type="button" class="btn" id="trend-more" hidden>Show all</button></div>
+    </details>
+
     <Figure no="Fig. III" title="Where every stock sits"
       dek="Each bar counts the stocks in a 5% band of distance from their own line. Gold is the ±5% band this page calls near.">
       <div class="spread-readout" style="display:flex; gap:14px; align-items:baseline; min-height:2.4em; padding-bottom:10px; border-bottom:1px solid var(--rule-soft)">
@@ -73,29 +86,18 @@ import Figure from '../components/Figure.astro';
   </div>
 
   <div class="wrap">
-    <section class="figure" aria-label="Tables">
-      <div class="tabs-head">
-        <div class="tabs" role="tablist" aria-label="Choose a table">
-          <button type="button" role="tab" id="tab-a" aria-pressed="true" aria-selected="true" aria-controls="panel-a">Closest to their line</button>
-          <button type="button" role="tab" id="tab-b" aria-pressed="false" aria-selected="false" aria-controls="panel-b">The daily record</button>
-        </div>
+    <section class="figure" aria-labelledby="stocks-title">
+      <div class="figure-head">
+        <span class="figure-no">Tab. A</span>
+        <h2 id="stocks-title">Closest to their line</h2>
       </div>
-      <div id="panel-a" role="tabpanel" aria-labelledby="tab-a">
-        <div class="table-tools">
-          <p class="figure-dek" style="margin:0">Every stock with a 200-week average, nearest its line first, whichever side.</p>
-          <span class="table-count" id="row-count"></span>
-        </div>
-        <div class="table-wrap"><table id="data-table" class="data-table"></table></div>
-        <div class="table-more"><button type="button" class="btn" id="row-more" hidden>Show all</button></div>
+      <div class="table-tools">
+        <p class="figure-dek" style="margin:0">Every stock with a 200-week average, nearest its line first, whichever side.
+          The filters above narrow this table.</p>
+        <span class="table-count" id="row-count"></span>
       </div>
-      <div id="panel-b" role="tabpanel" aria-labelledby="tab-b" hidden>
-        <div class="table-tools">
-          <input type="search" id="trend-date-filter" class="search" placeholder="Find a day — 2026-03…" aria-label="Filter the daily record by date">
-          <span class="table-count" id="trend-count"></span>
-        </div>
-        <div class="table-wrap"><table id="trend-table" class="data-table"></table></div>
-        <div class="table-more"><button type="button" class="btn" id="trend-more" hidden>Show all</button></div>
-      </div>
+      <div class="table-wrap"><table id="data-table" class="data-table"></table></div>
+      <div class="table-more"><button type="button" class="btn" id="row-more" hidden>Show all</button></div>
     </section>
 
     <section class="figure" aria-labelledby="method-title">

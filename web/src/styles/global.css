@@ -403,6 +403,10 @@ button, input, select { font: inherit; color: inherit; }
   .finding { border-right: 0; border-bottom: 1px solid var(--rule); padding-right: 0; }
   .method, .prose-cols { grid-template-columns: 1fr; columns: 1; }
 }
+/* A table that sits above the period/filter bar sticks under the header alone. */
+.data-table.no-toolbar thead th { top: var(--bar-h); }
+.how.numbers { margin: 0 0 8px; padding: 18px 0 22px; border-bottom: 1px solid var(--rule); max-width: none; }
+
 /* Side-by-side figures: reserve two lines for the dek so both charts start level. */
 .figure-grid .figure-dek { min-height: 3.1em; }
 @media (max-width: 960px) { .figure-grid .figure-dek { min-height: 0; } }
