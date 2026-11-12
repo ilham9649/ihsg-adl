@@ -362,6 +362,76 @@ export async function getMoversDays(months) {
   return results.flatMap(r => (r.Item?.days?.S ? JSON.parse(r.Item.days.S) : []));
 }
 
+// ── Sectors ──
+// One item: { code: Yahoo sector } for the whole listing, written by the
+// valuation job (which already asks Yahoo for every ticker's profile) and read
+// by the breadth refresh, for the sector heatmap and the rotation map. Each
+// run MERGES into the last, so a night where Yahoo's search answers for fewer
+// codes cannot shrink the map.
+const SECTORS_KEY = '_sectors';
+
+export async function getSectors() {
+  const result = await client.send(new GetItemCommand({
+    TableName: TABLE_NAME,
+    Key: { date: { S: SECTORS_KEY } },
+  }));
+  return result.Item?.sectors?.S ? JSON.parse(result.Item.sectors.S) : {};
+}
+
+export async function putSectors(fresh) {
+  const merged = { ...await getSectors(), ...fresh };
+  await client.send(new PutItemCommand({
+    TableName: TABLE_NAME,
+    Item: {
+      date: { S: SECTORS_KEY },
+      updatedAt: { S: new Date().toISOString() },
+      sectors: { S: JSON.stringify(merged) },
+    },
+  }));
+  return Object.keys(merged).length;
+}
+
+// ── Session top lists ──
+// Each session's top gainers, losers, value and volume across the WHOLE
+// listing (not just index weight), a month per item (`top#YYYY-MM`, ~40KB),
+// rewritten for the trailing year on every breadth refresh — same shape and
+// pruning as the movers months above.
+const TOP_MONTH_PREFIX = 'top#';
+
+export async function putTopMonths(byDate) {
+  const byMonth = new Map();
+  for (const [date, lists] of Object.entries(byDate)) {
+    const month = date.slice(0, 7);
+    if (!byMonth.has(month)) byMonth.set(month, {});
+    byMonth.get(month)[date] = lists;
+  }
+  const updatedAt = new Date().toISOString();
+  for (const [month, days] of byMonth) {
+    await client.send(new PutItemCommand({
+      TableName: TABLE_NAME,
+      Item: {
+        date: { S: `${TOP_MONTH_PREFIX}${month}` },
+        updatedAt: { S: updatedAt },
+        days: { S: JSON.stringify(days) },
+      },
+    }));
+  }
+  const first = [...byMonth.keys()].sort()[0];
+  if (first) {
+    const gone = monthBefore(first);
+    await deleteDates([`${TOP_MONTH_PREFIX}${gone}`, `${TOP_MONTH_PREFIX}${monthBefore(gone)}`]);
+  }
+}
+
+/** One session's top lists, or null. */
+export async function getTopDay(date) {
+  const result = await client.send(new GetItemCommand({
+    TableName: TABLE_NAME,
+    Key: { date: { S: `${TOP_MONTH_PREFIX}${date.slice(0, 7)}` } },
+  }));
+  return result.Item?.days?.S ? (JSON.parse(result.Item.days.S)[date] || null) : null;
+}
+
 // ── Free-float snapshots ──
 // One item PER RUN of the monthly freefloat job (`ff#YYYY-MM-DD`, same prefix
 // scheme as Sentiment), each holding the whole listing's ratios as JSON

@@ -348,12 +348,16 @@ function fetchFxToIdr(currency) {
  * error the two-model split exists to prevent. Better to omit a company than
  * to publish a number built the wrong way.
  */
-export async function valuateTicker(ticker) {
+export async function valuateTicker(ticker, { sectors = null } = {}) {
   const [fundamentals, profile, bars] = await Promise.all([
     fetchFundamentals(ticker).catch(() => ({})),
     fetchProfile(ticker).catch(() => ({ sector: null })),
     fetchChart(ticker, 10).catch(() => []),
   ]);
+
+  // Every sector Yahoo names is kept, valued or not: the front page's sector
+  // heatmap and rotation map need the whole listing, not just the ~40% valued.
+  if (sectors && profile.sector) sectors[ticker.replace(/\.JK$/, '')] = profile.sector;
 
   const price = bars.length ? bars[bars.length - 1].close : null;
   if (!(price > 0)) return null;
@@ -403,14 +407,17 @@ export async function valuateTicker(ticker) {
 /**
  * Value every ticker, cheapest first. Rate limited like the breadth scrape;
  * each ticker costs three Yahoo calls, so this runs longer than the daily job.
+ * Also returns `sectors` ({ code: sector }) for every ticker Yahoo names one
+ * for — collected on the same calls, at no extra cost.
  */
 export async function buildValuations(tickers, { batchSize = 6, batchDelay = 1500 } = {}) {
   const rows = [];
+  const sectors = {};
   let failed = 0;
 
   for (let i = 0; i < tickers.length; i += batchSize) {
     const batch = tickers.slice(i, i + batchSize);
-    const results = await Promise.all(batch.map(t => valuateTicker(t).catch(() => null)));
+    const results = await Promise.all(batch.map(t => valuateTicker(t, { sectors }).catch(() => null)));
     for (const row of results) {
       if (row) rows.push(row);
       else failed++;
@@ -421,5 +428,5 @@ export async function buildValuations(tickers, { batchSize = 6, batchDelay = 150
   }
 
   rows.sort((a, b) => b.upside - a.upside);
-  return { rows, failed };
+  return { rows, failed, sectors };
 }

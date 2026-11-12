@@ -8,9 +8,10 @@ import { buildValuations, fetchShareCounts } from './scrapers/valuation.js';
 import { fetchHeadlines, filterToday, wibDateString } from './scrapers/news.js';
 import { scoreSentiment } from './scrapers/sentiment.js';
 import { ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
-import { computeMovers, moversHistoryStart, BASELINE_FLOATS, aggregateMovers, parseRange, monthsSpanned } from './scrapers/movers.js';
+import { computeMovers, moversHistoryStart, BASELINE_FLOATS, aggregateMovers, parseRange, monthsSpanned, MOVERS_SESSIONS } from './scrapers/movers.js';
+import { createTopLists } from './scrapers/toplists.js';
 import { buildFloatSnapshot } from './scrapers/freefloat.js';
-import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, putMovers, getMovers, putMoversMonths, getMoversDays, putFloatSnapshot, getFloatSnapshots, acquireRefreshLock, releaseRefreshLock, acquireValuationLock, releaseValuationLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
+import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, putMovers, getMovers, putMoversMonths, getMoversDays, putFloatSnapshot, getFloatSnapshots, getSectors, putSectors, putTopMonths, getTopDay, acquireRefreshLock, releaseRefreshLock, acquireValuationLock, releaseValuationLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
 
 const BASE_HEADERS = {
   'Content-Type': 'application/json',
@@ -113,6 +114,10 @@ async function refreshData() {
     // share counts (one small extra Yahoo call per ticker, made in parallel
     // with its chart fetch). See scrapers/movers.js.
     const moverInputs = [];
+    // Each session's gainers/losers/value/volume across the whole listing, for
+    // the same trailing year as the movers, folded in as tickers arrive.
+    const topFrom = indexBars[Math.max(0, indexBars.length - MOVERS_SESSIONS)]?.date;
+    const tops = topFrom ? createTopLists(topFrom) : null;
     let successCount = 0;
     let failCount = 0;
 
@@ -155,6 +160,7 @@ async function refreshData() {
 
         // Not gated on MIN_DATA_POINTS: a week-old listing is already in the index.
         const recent = quotes.filter(q => q.date >= moversFrom);
+        if (tops && recent.length > 1) tops.add(batch[j].replace(/\.JK$/, ''), recent);
         if (recent.length && shares.length) {
           moverInputs.push({
             ticker: batch[j].replace(/\.JK$/, ''),
@@ -212,7 +218,11 @@ async function refreshData() {
     let moverDays = 0;
     try {
       const floatSnapshots = [BASELINE_FLOATS, ...await getFloatSnapshots()];
-      const movers = computeMovers(indexBars, moverInputs, { floatSnapshots });
+      // Sectors come from the valuation job; before its first run there are
+      // none, and the sessions simply carry no sector totals.
+      const sectors = await getSectors();
+      const sectorOf = Object.keys(sectors).length ? sectors : null;
+      const movers = computeMovers(indexBars, moverInputs, { floatSnapshots, sectorOf });
       if (movers.length > 0) {
         const floatAsOf = floatSnapshots.map(snap => snap.date).sort().pop();
         // Two shapes: each session's top five for the hover (`_movers`), and
@@ -225,7 +235,19 @@ async function refreshData() {
       console.error('Index movers failed:', err);
     }
 
-    console.log(`Refresh complete: ${successCount} OK, ${failCount} failed, ${series.length} days stored, ${ma200wRows.length} with a 200w MA, ${moverDays} days of movers from ${moverInputs.length} tickers`);
+    // Same rule: the top lists ride along, and a failure here is logged only.
+    let topDays = 0;
+    try {
+      if (tops) {
+        const byDate = tops.result();
+        topDays = Object.keys(byDate).length;
+        if (topDays) await putTopMonths(byDate);
+      }
+    } catch (err) {
+      console.error('Top lists failed:', err);
+    }
+
+    console.log(`Refresh complete: ${successCount} OK, ${failCount} failed, ${series.length} days stored, ${ma200wRows.length} with a 200w MA, ${moverDays} days of movers from ${moverInputs.length} tickers, ${topDays} days of top lists`);
 
     return {
       success: true,
@@ -256,7 +278,15 @@ async function refreshValuations() {
     const tickers = await getAllTickers();
     console.log(`Valuing ${tickers.length} tickers`);
 
-    const { rows, failed } = await buildValuations(tickers);
+    const { rows, failed, sectors } = await buildValuations(tickers);
+    // Saved before the valued-rows check: the sector map is useful even on a
+    // night the valuations come back empty. Logged, never fatal.
+    try {
+      const known = await putSectors(sectors);
+      console.log(`Sectors: ${Object.keys(sectors).length} this run, ${known} known`);
+    } catch (err) {
+      console.error('Sector map failed:', err);
+    }
     if (rows.length === 0) {
       return { success: false, message: 'No valuations computed', tickersFailed: failed };
     }
@@ -435,6 +465,30 @@ export const handler = async (event) => {
       // the other routes use, so the page's console stays clean.
       if (!result) return response(200, { success: false, message: 'No sessions on record in that range' }, { cacheable: true });
       return response(200, { success: true, ...result }, { cacheable: true });
+    }
+
+    // One session for the front page's heatmap and top lists: every stock's
+    // points, move, index weight and sector, plus the session's gainers,
+    // losers, value and volume. A date in the path, never a query string
+    // (see the range route above).
+    const session = method === 'GET' && path.match(/^\/api\/session\/([^/]+)\/?$/);
+    if (session) {
+      const dates = parseRange(session[1], session[1]);
+      if (!dates) return response(400, { error: 'Date must be YYYY-MM-DD' });
+      const date = dates.from;
+      const [days, top, sectors] = await Promise.all([getMoversDays([date.slice(0, 7)]), getTopDay(date), getSectors()]);
+      const day = days.find(d => d.date === date);
+      if (!day && !top) return response(200, { success: false, message: 'No session on record for that date' }, { cacheable: true });
+      const stocks = day
+        ? Object.entries(day.m || {}).map(([t, [pts, pct, bp]]) => [t, pts, pct, bp ?? null, sectors[t] || null])
+        : [];
+      return response(200, {
+        success: true,
+        date,
+        close: day?.close ?? null, change: day?.change ?? null, pct: day?.pct ?? null, estimate: day?.estimate ?? null,
+        stocks,  // [ticker, pts, pct, weightBp, sector]
+        top,     // { gain, lose, value, volume }: [ticker, close, pct, value, volume]
+      }, { cacheable: true });
     }
 
     // Rides along with /api/ad/refresh like the 200-week page — no refresh route.

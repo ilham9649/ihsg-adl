@@ -47,6 +47,8 @@ export class BreadthChart {
     this.data = [];
     this.dpr = Math.max(1, window.devicePixelRatio || 1);
     this.hover = -1;
+    this.pinned = -1;   // a chosen row, marked until another is chosen
+    this.onPick = null; // (i) => void — a click on the chart picks that row
     this.onHover = null; // (i) => void  — set by the hover-sync bus
     this.onLeave = null; // () => void
 
@@ -80,6 +82,7 @@ export class BreadthChart {
     canvas.addEventListener('pointermove', this._onMove);
     canvas.addEventListener('pointerdown', this._onMove);
     canvas.addEventListener('pointerleave', this._onLeave);
+    canvas.addEventListener('click', () => { if (this.onPick && this.hover >= 0) this.onPick(this.hover); });
     this._ro = new ResizeObserver(this._resize);
     this._ro.observe(canvas);
   }
@@ -150,6 +153,7 @@ export class BreadthChart {
     }
     if (this.panel === 'price') this._drawPrice(rows, p);
     else this._drawSeries(rows, p);
+    if (this.pinned >= 0 && this.pinned < rows.length) this._drawPin(rows.length, p);
     if (this.hover >= 0 && this.hover < rows.length) this._drawCrosshair(rows, p);
   }
 
@@ -400,6 +404,20 @@ export class BreadthChart {
       ctx.fillText(it.label, lx, ly);
       lx += ctx.measureText(it.label).width + 12;
     }
+  }
+
+  // The chosen session: a solid gold rule, quieter than the hover crosshair.
+  _drawPin(n, p) {
+    const ctx = this.ctx;
+    const x = Math.round(this._xAt(this.pinned, n, p)) + 0.5;
+    ctx.strokeStyle = 'rgba(166,122,38,0.55)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x, p.y); ctx.lineTo(x, p.y + p.h); ctx.stroke();
+  }
+
+  /** Mark row i as the chosen one (-1 clears it). */
+  setPinned(i) {
+    this.pinned = i == null ? -1 : i;
+    this._draw();
   }
 
   _drawCrosshair(rows, p) {
