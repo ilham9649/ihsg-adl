@@ -6,6 +6,8 @@
 // ──────────────────────────────────────────────
 import { BreadthChart } from './breadth-chart.js';
 import { API_BASE, getJson, setFreshness, setFreshnessError, debounce, sparkline } from './shared.js';
+import { renderHeatmap } from './heatmap.js';
+import { computeRotation, renderRotation } from './rotation.js';
 
 
 
@@ -144,6 +146,9 @@ const ZONE_FAINT = 'rgba(26,23,20,0.055)';
 
 let allData = [];
 let range = '252';  // the reading period: trailing sessions, 'ytd', or '0' for all
+// The session on show — the latest unless the reader picks another. It drives
+// the headline, the tiles, Who moved it, the session map and the rotation.
+let session = null;
 const panels = {};   // panel id → BreadthChart (built once, re-fed on every render)
 
 // ── Cross-chart hover sync ──
@@ -172,9 +177,11 @@ document.querySelectorAll('#period button').forEach(btn => btn.addEventListener(
 document.getElementById('date-filter').addEventListener('input', debounce(() => { tableLimit = TABLE_PAGE; renderTable(getFilteredData()); }));
 document.getElementById('record-more').addEventListener('click', () => { tableLimit = Infinity; renderTable(getFilteredData()); });
 document.querySelectorAll('.figure-legend input[type=checkbox]').forEach(cb => cb.addEventListener('change', applyMaToggles));
-document.getElementById('movers-prev').addEventListener('click', () => stepMovers(-1));
-document.getElementById('movers-next').addEventListener('click', () => stepMovers(1));
-document.getElementById('movers-day').addEventListener('change', e => pickDay(e.target.value));
+document.getElementById('session-prev').addEventListener('click', () => stepSession(-1));
+document.getElementById('session-next').addEventListener('click', () => stepSession(1));
+document.getElementById('session-day').addEventListener('change', e => pickSession(e.target.value));
+document.getElementById('session-latest').addEventListener('click', () => setSession(allData[allData.length - 1].date));
+document.querySelectorAll('[data-view]').forEach(btn => btn.addEventListener('click', () => setMoversView(btn.dataset.view)));
 document.getElementById('movers-mode-day').addEventListener('click', () => setMoversMode('day'));
 document.getElementById('movers-mode-range').addEventListener('click', () => setMoversMode('range'));
 document.getElementById('movers-more').addEventListener('click', toggleMoversLimit);
@@ -201,7 +208,12 @@ async function fetchData() {
     attachStochastic(allData);
     attachShinohara(allData);
     setFreshness(allData[allData.length - 1].date);
+    session = allData[allData.length - 1].date;
+    const day = document.getElementById('session-day');
+    day.min = allData[0].date;
+    day.max = session;
     renderAll();
+    syncSession();
   } catch (err) {
     console.error('Fetch error:', err);
     setFreshnessError(err.message);
@@ -220,6 +232,7 @@ function getFilteredData() {
 
 function renderAll() {
   const data = getFilteredData();
+  shownData = data;
   HoverSync.reset();
   renderCards();
   renderPanels(data);
@@ -280,6 +293,8 @@ function renderPanels(data) {
     if (!canvas || !tip) continue;
     if (!panels[id]) panels[id] = new BreadthChart(canvas, tip, spec);
     panels[id].setData(data);
+    panels[id].setPinned(data.findIndex(d => d.date === session));
+    panels[id].onPick = i => { if (data[i]) setSession(data[i].date); };
     linkBreadth(panels[id]);
   }
   applyMaToggles();
@@ -326,13 +341,14 @@ async function fetchMovers() {
     document.getElementById('movers-float-asof').textContent =
       payload.floatAsOf ? `as of ${payload.floatAsOf}` : 'date unknown';
     // The pickers offer only what is on record.
-    for (const id of ['movers-day', 'movers-from', 'movers-to']) {
+    for (const id of ['movers-from', 'movers-to']) {
       const input = document.getElementById(id);
       input.min = movers[0].date;
       input.max = movers[movers.length - 1].date;
     }
     document.getElementById('movers').hidden = false;
-    showMovers(movers[movers.length - 1].date);
+    showMovers(session || movers[movers.length - 1].date);
+    renderRotationFig();
   } catch (err) {
     console.error('Movers fetch error:', err);
   }
@@ -342,32 +358,241 @@ async function fetchMovers() {
 // hovered when the pointer leaves — moving down to read the list must not snap
 // it back. A range the reader typed in is never overridden by a stray hover.
 function linkMovers(data) {
-  HoverSync.register({ show: (i) => { if (moversMode === 'day' && data[i]) showMovers(data[i].date); }, hide: () => {} });
+  // A hover previews that session's points; leaving goes back to the session on show.
+  HoverSync.register({
+    show: (i) => { if (moversMode === 'day' && moversView === 'points' && data[i]) showMovers(data[i].date); },
+    hide: () => { if (moversMode === 'day' && moversView === 'points' && session) showMovers(session); },
+  });
 }
 
-// Where a session sits among the attributed ones: its own index, or halfway
-// between neighbours (x.5) when it has none — so the arrows still step out of
-// a session older than the window, or one the backend skipped.
-function moverPos(date) {
-  const i = movers.findIndex(d => d.date >= date);
-  if (i < 0) return movers.length - 0.5;
-  return movers[i].date === date ? i : i - 0.5;
+// ── The session on show ──
+// One date drives the headline, the tiles, Who moved it, the session map and
+// the rotation; the charts mark it. A weekend or holiday picked in the
+// calendar reads the session before it, and says so.
+let shownData = [];       // the rows the charts are drawn from (the period)
+let sessionData = null;   // /api/session/{date} for the session on show
+const sessionCache = new Map();
+let sessionRequest = 0;
+
+function setSession(date, note = '') {
+  if (!date) return;
+  session = date;
+  renderCards();
+  const i = shownData.findIndex(d => d.date === session);
+  for (const p of Object.values(panels)) p.setPinned(i);
+  syncSession(note);
 }
 
-function stepMovers(dir) {
-  const pos = moverPos(moverDate);
-  const target = dir < 0 ? movers[Math.ceil(pos) - 1] : movers[Math.floor(pos) + 1];
-  if (target) showMovers(target.date);
+function syncSession(note = '') {
+  const i = allData.findIndex(d => d.date === session);
+  document.getElementById('session-day').value = session;
+  document.getElementById('session-prev').disabled = i <= 0;
+  document.getElementById('session-next').disabled = i >= allData.length - 1;
+  document.getElementById('session-latest').hidden = i === allData.length - 1;
+  if (moversMode === 'day' && moversView === 'points') showMovers(session, { force: true, note });
+  renderRotationFig();
+  loadSession(session);
 }
 
-// A date picked in the calendar may be a weekend or a holiday: read the last
-// session on or before it, and say so.
-function pickDay(value) {
+function stepSession(dir) {
+  const i = allData.findIndex(d => d.date === session);
+  const target = allData[i + dir];
+  if (target) setSession(target.date);
+}
+
+function pickSession(value) {
   if (!value) return;
-  let session = null;
-  for (const d of movers) if (d.date <= value) session = d.date;
-  if (!session || session === value) showMovers(value, { force: true });
-  else showMovers(session, { force: true, note: `No trading on ${longDate(value)}; showing the session before.` });
+  let found = null;
+  for (const d of allData) if (d.date <= value) found = d.date;
+  if (!found) { setSession(allData[0].date, 'The record starts here.'); return; }
+  setSession(found, found === value ? '' : `No trading on ${longDate(value)}; showing the session before.`);
+}
+
+async function loadSession(date) {
+  const request = ++sessionRequest;
+  let data = sessionCache.get(date);
+  if (data === undefined) {
+    try {
+      data = await getJson(`/api/session/${date}`);
+      if (!data.success) data = null;
+    } catch (err) {
+      console.error('Session fetch error:', err);
+      data = null;
+    }
+    sessionCache.set(date, data);
+  }
+  if (request !== sessionRequest) return; // a newer pick won
+  sessionData = data;
+  renderHeatmapFig();
+  if (moversView !== 'points' && moversMode === 'day') renderTopView();
+}
+
+// ── Fig. II: the session map ──
+const pctText = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1) + '%';
+function renderHeatmapFig() {
+  const svg = document.getElementById('heatmap');
+  const label = document.getElementById('hm-label');
+  const readout = document.getElementById('hm-readout');
+  const stocks = sessionData?.stocks || [];
+  const withWeight = stocks.filter(s => s[3] > 0);
+  if (!withWeight.length) {
+    svg.replaceChildren();
+    svg.style.height = '0';
+    label.textContent = longDate(session);
+    readout.textContent = sessionData
+      ? 'No index weights on record for this session yet — the map fills in from the next refresh.'
+      : 'No session map for this date. It covers the last year of sessions.';
+    return;
+  }
+  svg.style.height = '';
+  const rest = () => {
+    label.textContent = longDate(session);
+    readout.textContent = `${withWeight.length} index stocks. Hover or tap a block.`;
+  };
+  // Drawn in real pixels, so the labels keep their size on any screen; a
+  // phone gets a taller box rather than a squashed one.
+  const width = Math.round(svg.getBoundingClientRect().width || 1000);
+  const height = width < 600 ? Math.round(width * 1.45) : Math.round(Math.min(580, width * 0.5));
+  svg.style.height = height + 'px';
+  renderHeatmap(svg, stocks, {
+    width, height,
+    onHover: it => {
+      if (!it) return rest();
+      label.textContent = it.ticker;
+      readout.textContent = `${it.sector} · ${pctText(it.pct)} · ${it.pts >= 0 ? '+' : '−'}${Math.abs(it.pts).toFixed(2)} pts · ${(it.value / 100).toFixed(2)}% of the index`;
+    },
+  });
+  document.getElementById('hm-alt').textContent =
+    `Treemap of ${withWeight.length} index stocks for ${longDate(session)}, sized by index weight and coloured by price move, grouped by sector.`;
+  rest();
+}
+
+// ── Fig. III: sector rotation ──
+function renderRotationFig() {
+  if (!movers.length || !session) return;
+  const svg = document.getElementById('rotation');
+  const label = document.getElementById('rot-label');
+  const readout = document.getElementById('rot-readout');
+  const series = computeRotation(movers.filter(d => d.date <= session));
+  const legendEl = document.getElementById('rot-legend');
+  if (!series.length) {
+    svg.replaceChildren();
+    svg.style.display = 'none';
+    legendEl.replaceChildren();
+    label.textContent = 'Sectors';
+    readout.textContent = 'No sector data on record yet. It appears after the nightly valuation job has filed sectors and the next breadth refresh has run.';
+    return;
+  }
+  svg.style.display = '';
+  const rest = () => { label.textContent = `Week to ${longDate(session)}`; readout.textContent = 'Hover or tap a sector.'; };
+  const width = Math.round(svg.getBoundingClientRect().width || 1000);
+  const height = Math.round(width < 600 ? width * 0.95 : width * 0.56);
+  svg.style.height = height + 'px';
+  const legend = renderRotation(svg, series, {
+    width, height,
+    onHover: it => {
+      if (!it) return rest();
+      label.textContent = it.quadrant;
+      readout.textContent = `${it.sector} · strength ${it.ratio.toFixed(1)} · momentum ${it.mom.toFixed(1)} · ${(it.weightBp / 100).toFixed(1)}% of the index`;
+    },
+  });
+  legendEl.replaceChildren(...legend.map(l => {
+    const li = document.createElement('li');
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.style.background = l.color;
+    const b = document.createElement('b');
+    b.textContent = l.sector;
+    li.append(dot, b, ` ${l.quadrant}`);
+    return li;
+  }));
+  document.getElementById('rot-alt').textContent =
+    `Relative rotation of ${legend.length} sectors against the index: ` + legend.map(l => `${l.sector} ${l.quadrant}`).join(', ') + '.';
+  rest();
+}
+
+// ── Who moved it: price and activity views ──
+// Points rank who moved the INDEX; these rank the whole listing by its own
+// numbers, from the session's top lists (backend/scrapers/toplists.js).
+let moversView = 'points'; // 'points' | 'price' | 'activity'
+const HEADS = {
+  points: ['Lifted the index · points', 'Dragged it · points'],
+  price: ['Top gainers · price %', 'Top losers · price %'],
+  activity: ['Most traded · value, ≈Rp', 'Most traded · volume, shares'],
+};
+const compact = v => {
+  const a = Math.abs(v);
+  return a >= 1e12 ? (v / 1e12).toFixed(2) + 'T' : a >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : a >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : a >= 1e3 ? (v / 1e3).toFixed(0) + 'K' : String(Math.round(v));
+};
+
+function setMoversView(view) {
+  if (moversMode === 'range' && view !== 'points') return; // one session only
+  moversView = view;
+  document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
+  document.getElementById('movers-head-up').textContent = HEADS[view][0];
+  document.getElementById('movers-head-down').textContent = HEADS[view][1];
+  document.querySelector('.movers-cols').classList.toggle('neutral', view === 'activity');
+  if (view !== 'points') renderTopView();
+  else if (moversMode === 'day') showMovers(session, { force: true });
+  else if (lastMovers) renderMovers(lastMovers);
+}
+
+// One row of a price/activity list: code, a bar against the list's largest,
+// the figure, and a side figure.
+function topItem(code, frac, main, side, title) {
+  const li = document.createElement('li');
+  li.title = title;
+  const span = (cls, text) => { const el = document.createElement('span'); el.className = cls; if (text != null) el.textContent = text; return el; };
+  const bar = span('mv-bar');
+  const fill = document.createElement('i');
+  fill.style.width = (frac * 100).toFixed(1) + '%';
+  bar.appendChild(fill);
+  li.append(span('mv-code', code), bar, span('mv-pts', main), span('mv-pct', side));
+  return li;
+}
+
+function renderTopView() {
+  const top = sessionData?.top;
+  const day = moversByDate.get(session);
+  document.getElementById('movers-date').textContent = longDate(session);
+  const move = document.getElementById('movers-move');
+  if (day) {
+    move.textContent = `IHSG ${fmtPts(day.change)} pts (${fmtPct(day.pct)})`;
+    move.className = 'movers-move ' + (day.change >= 0 ? 'up' : 'down');
+  } else move.textContent = '';
+  const more = document.getElementById('movers-more');
+  if (!top) {
+    fillMovers('movers-up', [], 1, '—');
+    fillMovers('movers-down', [], 1, '—');
+    more.hidden = true;
+    document.getElementById('movers-foot').textContent = !sessionCache.has(session)
+      ? 'Loading the session…'
+      : 'No price lists on record for this session — they cover the last year of sessions.';
+    return;
+  }
+  const n = moversLimit;
+  const [left, right] = moversView === 'price' ? [top.gain, top.lose] : [top.value, top.volume];
+  // Row: [ticker, close, pct, value, volume]
+  const fill = (id, rows, metric, main, side) => {
+    const list = rows.slice(0, n);
+    const scale = Math.max(...list.map(r => Math.abs(metric(r))), 0) || 1;
+    const el = document.getElementById(id);
+    if (!list.length) { fillMovers(id, [], 1, 'None this session.'); return; }
+    el.replaceChildren(...list.map(r => topItem(r[0], Math.abs(metric(r)) / scale, main(r), side(r),
+      `${r[0]} closed at ${r[1].toLocaleString('en-US')}, ${pctText(r[2])}; ≈Rp ${compact(r[3])} traded, ${compact(r[4])} shares`)));
+  };
+  if (moversView === 'price') {
+    fill('movers-up', left, r => r[2], r => pctText(r[2]), r => r[1].toLocaleString('en-US'));
+    fill('movers-down', right, r => r[2], r => pctText(r[2]), r => r[1].toLocaleString('en-US'));
+  } else {
+    fill('movers-up', left, r => r[3], r => compact(r[3]), r => pctText(r[2]));
+    fill('movers-down', right, r => r[4], r => compact(r[4]), r => pctText(r[2]));
+  }
+  more.hidden = Math.max(left.length, right.length) <= MOVERS_SHORT && moversLimit === MOVERS_SHORT;
+  more.textContent = moversLimit === MOVERS_SHORT ? `Show ${MOVERS_LONG}` : `Show ${MOVERS_SHORT}`;
+  document.getElementById('movers-foot').textContent = moversView === 'price'
+    ? 'Across the whole listing, not just index weight: a small stock at its daily limit tops this list while barely touching the IHSG.'
+    : "Value is close × volume, an approximation — IDX's own figure prices each trade.";
 }
 
 function moverItem(m, scale) {
@@ -439,10 +664,6 @@ function renderMoversEmpty(title, message) {
 function showMovers(date, { force = false, note = '' } = {}) {
   if (!movers.length || (date === moverDate && !force)) return;
   moverDate = date;
-  const pos = moverPos(date);
-  document.getElementById('movers-prev').disabled = !movers[Math.ceil(pos) - 1];
-  document.getElementById('movers-next').disabled = !movers[Math.floor(pos) + 1];
-  document.getElementById('movers-day').value = date;
 
   const day = moversByDate.get(date);
   if (!day) {
@@ -484,13 +705,17 @@ async function loadFullDay(date, note) {
 
 function toggleMoversLimit() {
   moversLimit = moversLimit === MOVERS_SHORT ? MOVERS_LONG : MOVERS_SHORT;
-  if (moversMode === 'day') showMovers(moverDate, { force: true });
+  if (moversView !== 'points') renderTopView();
+  else if (moversMode === 'day') showMovers(moverDate, { force: true });
   else if (lastMovers) renderMovers(lastMovers);
 }
 
 function setMoversMode(mode) {
   if (!movers.length || mode === moversMode) return;
+  // Price and activity are one session's lists; a range ranks by points only.
+  if (mode === 'range' && moversView !== 'points') setMoversView('points');
   moversMode = mode;
+  document.querySelectorAll('[data-view]').forEach(b => { if (b.dataset.view !== 'points') b.disabled = mode === 'range'; });
   for (const m of ['day', 'range']) {
     const tab = document.getElementById(`movers-mode-${m}`);
     tab.classList.toggle('is-active', m === mode);
@@ -498,7 +723,7 @@ function setMoversMode(mode) {
     document.getElementById(`movers-pick-${m}`).hidden = m !== mode;
   }
   if (mode === 'day') {
-    showMovers(moverDate || movers[movers.length - 1].date, { force: true });
+    showMovers(session || movers[movers.length - 1].date, { force: true });
     return;
   }
   // First visit: the last twenty sessions, about a month.
@@ -546,7 +771,8 @@ function ordinal(n) {
 // The headline always reads the latest session, whatever the period.
 function renderCards() {
   if (!allData.length) return;
-  const latest = allData[allData.length - 1];
+  const at = Math.max(0, allData.findIndex(d => d.date === session));
+  const latest = allData[at] || allData[allData.length - 1];
   const pa = latest.pctAdvancing;
   document.getElementById('hero-date').textContent = longDate(latest.date);
   if (pa != null) {
@@ -588,7 +814,7 @@ function renderCards() {
   document.getElementById('universe-count').textContent = latest.advances + latest.declines + latest.unchanged;
 
   // Tiles: the latest value, and its last 30 sessions as a sparkline.
-  const recent = allData.slice(-30);
+  const recent = allData.slice(Math.max(0, at - 29), at + 1);
   const tiles = [
     ['advances', latest.advances, null, d => d.advances, 'up'],
     ['declines', latest.declines, null, d => d.declines, 'down'],
@@ -718,6 +944,14 @@ function renderTable(data) {
     ? `${rows.length} of ${allData.length.toLocaleString('en-US')} sessions match`
     : `${shown.length.toLocaleString('en-US')} of ${rows.length.toLocaleString('en-US')} sessions`;
 }
+
+// Both SVG figures are drawn at their real size; redraw when that changes.
+let lastWidth = window.innerWidth;
+window.addEventListener('resize', debounce(() => {
+  if (window.innerWidth === lastWidth) return; // a phone's toolbar showing/hiding
+  lastWidth = window.innerWidth;
+  if (session) { renderHeatmapFig(); renderRotationFig(); }
+}, 250));
 
 // ── Start ──
 fetchData();
