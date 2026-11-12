@@ -16,6 +16,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build site
+        run: |
+          cd web
+          npm ci
+          npm run build
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -23,21 +36,24 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-southeast-1
 
-      - name: Sync frontend to S3
+      - name: Sync site to S3
         run: |
-          # no-cache means "store it, but revalidate before reuse". Nothing here
-          # is content-hashed, so a filename always points at the newest file and
-          # a browser must never serve its copy without asking. Dropping this
-          # header lets browsers cache heuristically off Last-Modified and hold
-          # stale JS for hours after a deploy.
-          aws s3 sync frontend/ s3://finance.sulaksono.id/ \
+          BUCKET=s3://finance.sulaksono.id
+          # 1. Scripts and styles first. Astro names them by content hash, so a
+          #    name never points at different bytes: cache them for a year.
+          #    Never --delete here: a page CloudFront or a browser still holds
+          #    may name last deploy's assets for a few minutes after the
+          #    invalidation, and old ones cost ~100KB a deploy to keep.
+          aws s3 sync web/dist/_astro/ "$BUCKET/_astro/" \
+            --cache-control "public, max-age=31536000, immutable"
+          # 2. Pages and the rest, now that every asset they name exists.
+          #    no-cache = store it, but revalidate before reuse: a page's name
+          #    never changes, so a browser must always ask for the newest one.
+          #    --delete also clears the old frontend's files (app.js, styles.css…).
+          aws s3 sync web/dist/ "$BUCKET/" \
             --delete \
-            --cache-control "no-cache" \
-            --exclude "*.html"
-          for page in index valuation sentiment ma200w; do
-            aws s3 cp "frontend/$page.html" "s3://finance.sulaksono.id/$page.html" \
-              --cache-control "no-cache"
-          done
+            --exclude "_astro/*" \
+            --cache-control "no-cache"
 
       - name: Invalidate CloudFront
         # Distribution ID for finance.sulaksono.id. Inlined as a literal (not a

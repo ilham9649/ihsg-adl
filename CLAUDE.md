@@ -31,8 +31,23 @@ npm ci                    # Install dependencies
 npm test                  # Run unit tests
 ```
 
-### Frontend (Static files)
-No build step — vanilla JS served directly to S3. Edit and deploy.
+### Frontend (`web/`, Astro)
+```bash
+cd web
+npm ci
+npm run build             # → web/dist/, one .html per page (same URLs as ever)
+LEDGER_API_DIR=/tmp/ledger-api npm run dev   # local, against saved API JSON (see Testing Locally)
+```
+**Astro 5.18.2, static output** — no framework runs in the browser. Pages are `web/src/pages/*.astro`; each page's behaviour is a plain ES-module script in `web/src/lib/` that Astro bundles into a content-hashed file under `/_astro/`. Shared pieces, so each lives once:
+- `layouts/Base.astro` — head (incl. the CSP), sticky site header with the section nav and the **data-age pill**, footer. A new section is one entry in its `SECTIONS`.
+- `components/Figure.astro` — figure head, one-line dek, canvas + tooltip, and the long explanation behind **"How to read this"** (`slot="how"`).
+- `lib/shared.js` — `getJson` (handles the v1/v2 response shapes), `setFreshness` (pill goes red once data is older than `staleAfter` days — a stopped job must never pass for today's reading), `sparkline`, `debounce`.
+- `lib/table.js` — `dataTable`: every table on the site (sortable headings, sticky header, 50 rows then "Show all"; a cell's alignment comes from the same `num` flag as its heading).
+- `styles/global.css` — design tokens on `:root` and every shared style; `styles/valuation.css` is the one page-specific sheet.
+
+> **CSP is `script-src 'self'`.** Keep scripts as bundled `<script src="../lib/…">` in pages; never add `<script is:inline>` or inline event handlers — they would be blocked in production.
+
+Design: **refined editorial** — Fraunces / Newsreader / JetBrains Mono on paper and ink, green up / red down, full-width figures with the prose folded away. Keep new pages in that system rather than inventing per-page styles.
 
 ### Package Lambda for deployment
 ```bash
@@ -53,7 +68,7 @@ The Lambda handler (`backend/index.js`) supports both REST API v1 and HTTP API v
 - `getPath(event)` — extracts path from `event.rawPath` (v2) or `event.path` (v1), strips stage prefix for v1
 - Response handling accounts for double-wrapped body in v1 format (`json.body` + `json.statusCode`)
 
-Frontend (`frontend/app.js`) handles both formats when parsing API responses.
+The frontend handles both formats when parsing API responses (`getJson` in `web/src/lib/shared.js`).
 
 ### Delisted Companies (survivorship bias)
 `IDX_TICKERS` is a snapshot of who is listed **today**, so on its own the history is survivors-only — every firm that died is invisible on all past dates, biasing historical `% Advancing` upward (failing companies fall hard before they exit). `DELISTED_TICKERS` in `tickers.js` closes that gap; `getAllTickers()` returns both.
@@ -78,9 +93,9 @@ Uses Yahoo Finance v8 chart API directly (`/v8/finance/chart/{ticker}`) — no e
 ### DynamoDB Pattern
 Table: `ihsg-adl` (or `TABLE_NAME` env var). Primary key is `date` (string S). Stores aggregated daily metrics, not per-ticker data. `BatchWriteItem` chunks at 25 items max.
 
-### Frontend Indicators (computed client-side, `frontend/app.js`)
+### Frontend Indicators (computed client-side, `web/src/lib/breadth.js`)
 Everything the frontend charts is **derived in the browser** from what the API already returns (daily breadth counts + IHSG OHLC) — there are **no dedicated backend/DB fields** for these, so tuning them needs only a frontend deploy (no re-refresh):
-**All five panels are `BreadthChart`** (`frontend/breadth-chart.js`, dependency-free canvas) so they share one visual language. Panel configuration lives in one place — `PANEL_SPECS` in `app.js`. Chart.js was removed; do not reintroduce a charting library for a new panel, extend `BreadthChart` instead. Its `series` panel supports `field`/`rawField`/`overlays`/`ref`/`yMin`/`yMax`/`zones`/`markField`/`tipAd`.
+**Every chart on the site is a `BreadthChart`** (`web/src/lib/breadth-chart.js`, dependency-free canvas, an ES module) so they share one visual language. The front page's panel configuration lives in one place — `PANEL_SPECS` in `breadth.js`. Chart.js was removed; do not reintroduce a charting library for a new panel, extend `BreadthChart` instead. Its `series` panel supports `field`/`rawField`/`overlays`/`ref`/`yMin`/`yMax`/`zones`/`markField`/`tipAd`, plus `legend: false` (the page draws the legend once, in the figure head), `area: false` + `lineColor` (a plain line, no red/green fill — used where the meaning is in the bands, e.g. the Stochastic) and `colors` (palette override). Hover runs on pointer events, so touch works.
 
 > **Series fill/stroke colour splits at `ref`**, not by the last value: green above the neutral line, red below. A series that crosses its reference (the breadth line through 50, the Shinohara spread through 0) must not read as one colour throughout.
 
@@ -121,7 +136,7 @@ The page prints the estimate beside the real move, for a day or a range, so the 
 
 **Upkeep:** add every HSC list change to `HSC_SCHEDULE` (quarterly reviews and any off-cycle announcement); check the `freefloat` job's CloudWatch line each month (`Free floats complete` vs `snapshot not stored`); re-check the residual regression after a new HSC list or a large float change. A float override wins over every snapshot — to hand a code back to the snapshots once they're right, end its override with a `{ from, ratio: null }` step.
 
-### Valuation page (`frontend/valuation.html`)
+### Valuation page (`web/src/pages/valuation.astro`)
 A **second page** — "The Valuation Column" — ranking the IDX listing cheapest to dearest by estimated intrinsic value. Unlike every indicator on the front page, this is **not** computed client-side: the frontend only filters and renders what `GET /api/valuation` returns.
 
 **Two models, because one does not fit both kinds of business** (`backend/scrapers/valuation.js`):
@@ -130,7 +145,7 @@ A **second page** — "The Valuation Column" — ranking the IDX listing cheapes
 
 Both return a per-share number, so the two sets rank in one list.
 
-> **DDM is a cross-check table, not a third routing bucket.** `ddmPerShare` runs a two-stage dividend discount model — same growth/discount assumptions as the DCF (shares `presentValueOfGrowingFlow`), built on `annualCashDividendsPaid`/`quarterlyCashDividendsPaid` (already in `FIELDS`, no new Yahoo call) instead of free cash flow. It runs for every company regardless of `isFinancial()` — unlike the primary model, valuing what a company pays out doesn't depend on what kind of business it is — and returns `null` for the roughly half of the universe with no reliable dividend. Converted through the same `fxRate` as the primary model. `frontend/valuation.js` surfaces it as **Table B** ("What It Pays, Against What It's Worth"), not an extra column on the primary ranking (Table A) — an earlier version bolted it on as a column and it read as a third confusing figure crammed into one row. Table B only lists companies with a `ddmFairValue` and a positive primary `fairValue` (a negative primary value has nothing to divide the ratio against), sorted by the gap, widest first. The gap itself is deliberate signal: a company that generates more cash than it distributes (common among IDX's controlling-family firms) shows a DDM well below its main figure.
+> **DDM is a cross-check table, not a third routing bucket.** `ddmPerShare` runs a two-stage dividend discount model — same growth/discount assumptions as the DCF (shares `presentValueOfGrowingFlow`), built on `annualCashDividendsPaid`/`quarterlyCashDividendsPaid` (already in `FIELDS`, no new Yahoo call) instead of free cash flow. It runs for every company regardless of `isFinancial()` — unlike the primary model, valuing what a company pays out doesn't depend on what kind of business it is — and returns `null` for the roughly half of the universe with no reliable dividend. Converted through the same `fxRate` as the primary model. `web/src/lib/valuation.js` surfaces it as a second table (the "What it pays vs. what it's worth" tab), not an extra column on the primary ranking — an earlier version bolted it on as a column and it read as a third confusing figure crammed into one row. Table B only lists companies with a `ddmFairValue` and a positive primary `fairValue` (a negative primary value has nothing to divide the ratio against), sorted by the gap, widest first. The gap itself is deliberate signal: a company that generates more cash than it distributes (common among IDX's controlling-family firms) shows a DDM well below its main figure.
 
 > **Currency: fundamentals aren't always IDR, even though every price is.** A handful of exporters (ADRO, ITMG, MEDC, PGEO, ...) file annual accounts in USD while trading in IDR on the IDX. `fetchFundamentals` captures the `currencyCode` Yahoo tags on every timeseries line; `valuateTicker` converts the resulting per-share fair value to IDR via a live `IDR=X` (USD/IDR) rate — fetched once per run and cached (`fxRateToIdr` in `valuation.js`), not once per ticker — before comparing it to the IDR price. Left unconverted this silently divides a USD-scale numerator by an IDR-scale price, landing the fair value ~15,000x too small — it doesn't error, it just reads as the company being worthless (this hit ~41 of ~390 valued companies before the fix, all USD filers, e.g. PGEO showed a fair value of Rp0.05 against a Rp1,065 price).
 
@@ -138,7 +153,7 @@ Both return a per-share number, so the two sets rank in one list.
 
 **Known limits — these are honest constraints, not bugs to patch:** Yahoo publishes only ~4 years of annuals (from ~2022), so growth rests on a short history; every name is discounted at a flat 13% (no per-name beta — four annual reports cannot support that precision); loss-making and non-filing companies get **no valuation** and are absent from the table rather than shown as cheap. The page states all of this in its method note. It ranks; it does not price.
 
-**The spread figure** (`renderSpread` in `valuation.js`) is the page's signature: one hairline per company on a `log₂(fairValue / price)` axis, **left = cheap**, drawn as inline SVG (not `BreadthChart` — that panel is built for time series, and this is a 1-D distribution; no library was added). Log scale because the raw discount runs −1240%…+685% and collapses to a smear on a linear axis. The axis floor is `VOID_FLOOR = -6`; below that the estimate is under a sixtieth of the price, which is an artefact of rounding a near-zero fair value rather than a reading, so those join the **no-value block** past a broken-axis mark. That block is ~118 of 390 — the biggest single finding on the page, so it is deliberately the heaviest object in the figure. Hairlines are drawn at low opacity so crowding darkens the field on its own. Filtering the table dims non-matching hairlines rather than re-scaling the figure, which would make the hero jump while someone types.
+**The spread figure** (`renderSpread` in `web/src/lib/valuation.js`) is the page's signature: one hairline per company on a `log₂(fairValue / price)` axis, **left = cheap**, drawn as inline SVG (not `BreadthChart` — that panel is built for time series, and this is a 1-D distribution; no library was added). Log scale because the raw discount runs −1240%…+685% and collapses to a smear on a linear axis. The axis floor is `VOID_FLOOR = -6`; below that the estimate is under a sixtieth of the price, which is an artefact of rounding a near-zero fair value rather than a reading, so those join the **no-value block** past a broken-axis mark. That block is ~118 of 390 — the biggest single finding on the page, so it is deliberately the heaviest object in the figure. Hairlines are drawn at low opacity so crowding darkens the field on its own. Filtering the table dims non-matching hairlines rather than re-scaling the figure, which would make the hero jump while someone types.
 
 > **Readout text is built from DOM nodes, never `innerHTML`.** `ticker`/`name` come straight from Yahoo. The table takes the same care for the same reason.
 
@@ -146,7 +161,7 @@ Both return a per-share number, so the two sets rank in one list.
 
 **Scheduling:** valuations move only when a company files, so this runs on its **own** trigger — `POST /api/valuation/refresh`, or an EventBridge event with `job: "valuation"`. It must **not** share the daily breadth cron: each ticker costs three Yahoo calls (~967 × 3), so the two jobs together would exceed the 900s Lambda timeout. Its EventBridge rule (`ihsg-adl-valuation-refresh`, nightly 11:00 UTC) lives in the infrastructure repo, `terraform/finance-adl/main.tf`, beside the others.
 
-### Sentiment page (`frontend/sentiment.html`)
+### Sentiment page (`web/src/pages/sentiment.astro`)
 A **third page** — market-wide (not per-stock) daily sentiment, scored by an LLM from Indonesian financial news headlines. Score scale is **−100 (extremely bearish) to +100 (extremely bullish), 0 = neutral**.
 
 **Pipeline** (`backend/scrapers/news.js` + `backend/scrapers/sentiment.js`): fetch **three** Indonesian financial RSS feeds in parallel — CNBC Indonesia's general "Market" section, Kontan's `investasi` feed (the most directly on-topic: ticker moves, IHSG levels, foreign net buy/sell), and Detik Finance — merge and dedupe by title (`mergeHeadlines`, sorted newest first), filter to today's WIB-calendar-day headlines (falling back to the most recent ~20 across all sources on a thin news day), and send them to DeepSeek's OpenAI-compatible chat-completions API via raw `fetch` (no SDK, matching this repo's zero-dependency scraper convention) with model `deepseek-chat` (overridable, see below). Each source fails independently — `Promise.allSettled` in `fetchHeadlines()` — so one outlet going down (CNBC 403'd the deployed Lambda once; see below) degrades the reading instead of killing it. The feeds mix genuine market news with unrelated stories (disasters, banking how-tos); the prompt itself does the filtering, not the scraper. A response that fails to parse is discarded rather than stored — a phantom reading in the time series is worse than a skipped day.
@@ -157,14 +172,14 @@ A **third page** — market-wide (not per-stock) daily sentiment, scored by an L
 
 **Storage:** one DynamoDB item **per day**, like the daily breadth rows, but under key `sent#YYYY-MM-DD` — a distinct prefix from the plain `date` key so it can never collide with, or be clobbered by, the breadth refresh's full-item overwrite for that same calendar day. `getAllSentiment()` scans on `begins_with(date, "sent#")`.
 
-**Scheduling:** sentiment moves once a day off a few RSS fetches and one LLM call (seconds, not minutes), so like valuation it runs on its **own** trigger — `POST /api/sentiment/refresh`, or an EventBridge event with `job: "sentiment"`. Its EventBridge rule (`ihsg-adl-sentiment-refresh`, 15:00 UTC = 22:00 WIB) lives in the infrastructure repo like valuation's. Unlike valuation's ~500s job, this one is fast enough that the **Re-read** button on the page goes straight through API Gateway without hitting its 29s cap. The refresh route has no auth, and each call bills a real LLM request, so `acquireSentimentCooldown`/`releaseSentimentCooldown` in `lib/db.js` enforce a 5-minute cooldown between runs.
+**Scheduling:** sentiment moves once a day off a few RSS fetches and one LLM call (seconds, not minutes), so like valuation it runs on its **own** trigger — `POST /api/sentiment/refresh`, or an EventBridge event with `job: "sentiment"`. Its EventBridge rule (`ihsg-adl-sentiment-refresh`, 15:00 UTC = 22:00 WIB) lives in the infrastructure repo like valuation's. Unlike valuation's ~500s job, this one is fast enough to go straight through API Gateway without hitting its 29s cap. The page has **no Re-read button** any more — the refresh route has no auth and each call bills a real LLM request, so the page only reads. The route remains, so `acquireSentimentCooldown`/`releaseSentimentCooldown` in `lib/db.js` enforce a 5-minute cooldown between runs.
 
 **Known limits — stated on the page itself:** it's one LLM's read of one day's headlines from a handful of news feeds, not a rigorous signal — the same headlines re-read, or read by a different model, would not always file the same number. **No historical backfill** — investigated pulling a year of history from the Wayback Machine's CDX index for these feed URLs, but CNBC's feed has only ~11 snapshots over the past year (roughly monthly), far too sparse for a "one point per trading day" series. The RSS feeds themselves only expose a rolling window, not a deep archive, either. So the trend line starts thin from first deploy and lengthens by one point a day going forward — there is no way to backfill it short of finding a genuinely different, actually-archival data source.
 
-### 200-Week Trend Line page (`frontend/ma200w.html`)
+### 200-Week Trend Line page (`web/src/pages/ma200w.astro`)
 A **fourth page** — market-wide proximity to each stock's own **200-week moving average** (a slow support/resistance line long-term holders watch — roughly the price averaged over the trailing ~3.8 years). Unlike Sentiment (its own LLM call) or Valuation (its own fetch job), this one **piggybacks entirely on the existing daily breadth scrape** — no new job, no new Yahoo calls, no new Lambda timeout budget to worry about.
 
-**Computation** (`backend/scrapers/ma200w.js`, pure — no fetching): `refreshData()` in `index.js` already pulls `DAYS_BACK = 6100` days of daily bars per ticker to fold into breadth counts; for every ticker whose quotes survive that same batch loop, it now also calls `ma200wSnapshot(quotes)` before the quotes go out of scope. That function buckets the daily bars into ISO weeks — **the same convention as the frontend's weekly Stochastic/Shinohara panels** (`frontend/app.js`: `isoWeek`/`weeklyBars`): a week's close is whatever the latest available close is, including a still-forming current week, not only a "completed" one. It averages the trailing 200 weekly closes (adjusted close, same ex-dividend reasoning as breadth classification in `yahoo.js`) and returns `{ asOf, price, ma200w, pctFromMa }`, or `null` if the ticker has under 200 weekly buckets — a name listed less than ~3.8 years ago has no line to be near, and is omitted rather than estimated (the same honest gap Valuation leaves for companies its models can't value).
+**Computation** (`backend/scrapers/ma200w.js`, pure — no fetching): `refreshData()` in `index.js` already pulls `DAYS_BACK = 6100` days of daily bars per ticker to fold into breadth counts; for every ticker whose quotes survive that same batch loop, it now also calls `ma200wSnapshot(quotes)` before the quotes go out of scope. That function buckets the daily bars into ISO weeks — **the same convention as the frontend's weekly Stochastic/Shinohara panels** (`web/src/lib/breadth.js`: `isoWeek`/`weeklyBars`): a week's close is whatever the latest available close is, including a still-forming current week, not only a "completed" one. It averages the trailing 200 weekly closes (adjusted close, same ex-dividend reasoning as breadth classification in `yahoo.js`) and returns `{ asOf, price, ma200w, pctFromMa }`, or `null` if the ticker has under 200 weekly buckets — a name listed less than ~3.8 years ago has no line to be near, and is omitted rather than estimated (the same honest gap Valuation leaves for companies its models can't value).
 
 **Storage** (`backend/lib/db.js`) — two shapes for two different questions, each reusing a pattern already established by another page:
 - *"How has the market read over time?"* → one small item **per day** (`ma200w#YYYY-MM-DD`, same prefix scheme as Sentiment's `sent#`), holding just `universeCount`/`pctNear`/`pctBelow` (from `summarizeMa200w`). Cheap enough to scan and keep forever.
@@ -180,7 +195,7 @@ A **fourth page** — market-wide proximity to each stock's own **200-week movin
 
 ### Deployment
 Push to `main` triggers GitHub Actions:
-1. Frontend: `aws s3 sync` to S3, CloudFront invalidation
+1. Frontend: `npm ci && npm run build` in `web/`, then `aws s3 sync web/dist/` — hashed `/_astro/*` first with a one-year immutable cache (never deleted, so a page still cached for a few minutes after a deploy keeps its assets), then the pages with `no-cache` and `--delete`, then a CloudFront invalidation
 2. Backend: `npm ci`, zip, `lambda update-function-code`
 
 ## Environment Variables
@@ -193,7 +208,7 @@ Push to `main` triggers GitHub Actions:
 
 No hosted dev server, but you can verify before deploying:
 
-- **Frontend:** run a tiny static server over `frontend/` that returns a saved copy of the live API for `/api/ad` (`curl https://finance.sulaksono.id/api/ad -o /tmp/ad.json`) — and `/api/movers` the same way, or `computeMovers` run over your own fetched bars — then drive it in a browser. All indicators are client-side, so this exercises real behavior against real data. (Charts render on canvas — screenshot to verify.) The weekly panels (Stochastic, Shinohara) need a **long** reading period to show anything; the default range is One Year for that reason.
+- **Frontend:** `cd web && npm run dev` proxies `/api/*` to the live site. If that proxy is refused (Node's TLS connection to the site can be reset where curl's isn't), save the API locally and point the dev server at it: `mkdir -p /tmp/ledger-api && for p in ad movers valuation sentiment ma200w; do curl -s https://finance.sulaksono.id/api/$p -o /tmp/ledger-api/$p.json; done`, then `LEDGER_API_DIR=/tmp/ledger-api npm run dev` (it serves `/api/<name>` from `<name>.json`; the movers range/expanded-day routes need the live API). All indicators are client-side, so this exercises real behavior against real data. (Charts render on canvas — screenshot to verify.) The weekly panels (Stochastic, Shinohara) need a **long** reading period to show anything; the default range is One Year for that reason.
 - **Valuation:** `buildValuations` needs no AWS creds — run it straight to a file and serve that as `/api/valuation`:
   `node -e "import('./backend/scrapers/valuation.js').then(async m=>{const{getAllTickers}=await import('./backend/lib/tickers.js');console.log(JSON.stringify(await m.buildValuations(await getAllTickers())))}"`
   (~10 min for the full universe at three calls per ticker). A single name is quick: `valuateTicker('BBCA.JK')`.
