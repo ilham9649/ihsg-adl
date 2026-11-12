@@ -14,6 +14,7 @@ import { parseScoreResponse } from './scrapers/sentiment.js';
 import { weeklyCloses, ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
 import { valueOn, capWeights, computeMovers, moversHistoryStart, aggregateMovers, parseRange, monthsSpanned } from './scrapers/movers.js';
 import { parseStat, buildFloatSnapshot, MIN_COVERAGE } from './scrapers/freefloat.js';
+import { createTopLists } from './scrapers/toplists.js';
 import { HSC_SCHEDULE, hscExcludedOn, FLOAT_OVERRIDES, floatOverrideOn } from './lib/ihsg-rules.js';
 
 // Helper: assert the A/D Line cumulative invariant (adLine is a genuine running
@@ -1046,5 +1047,87 @@ describe('parseRange and monthsSpanned — reading a range request', () => {
   test('lists every month a range touches, across a year end', () => {
     strictEqual(monthsSpanned('2025-11-15', '2026-02-03').join(), '2025-11,2025-12,2026-01,2026-02');
     strictEqual(monthsSpanned('2026-05-01', '2026-05-31').join(), '2026-05');
+  });
+});
+
+describe('computeMovers — weights and sector totals (heatmap, rotation map)', () => {
+  // Same two-stock index as above: A is 500 of 1500 going in, B 1000.
+  const index = [{ date: '2026-10-01', close: 1500 }, { date: '2026-10-02', close: 1450 }];
+  const tickers = [
+    { ticker: 'A', bars: [{ date: '2026-10-01', close: 10 }, { date: '2026-10-02', close: 11 }], shares: [{ date: '2025-12-31', value: 100 }] },
+    { ticker: 'B', bars: [{ date: '2026-10-01', close: 5 }, { date: '2026-10-02', close: 4.5 }], shares: [{ date: '2025-12-31', value: 200 }] },
+  ];
+  const opts = { floatSnapshots: [{ date: '2026-01-01', floats: { A: 0.5, B: 1 } }], excludedOn: () => new Set(), floatOn: () => null, weightCap: 1 };
+
+  test('each stock carries its weight going in, in basis points', () => {
+    const [day] = computeMovers(index, tickers, opts);
+    strictEqual(day.m.A[2], 3333.33);
+    strictEqual(day.m.B[2], 6666.67);
+  });
+
+  test('a heavyweight that sat still stays in m — the heatmap needs it', () => {
+    const flat = [tickers[0], { ...tickers[1], bars: [{ date: '2026-10-01', close: 5 }, { date: '2026-10-02', close: 5 }] }];
+    const [day] = computeMovers(index, flat, opts);
+    strictEqual(day.m.B[0], 0);
+    ok(day.m.B[2] > 1);
+  });
+
+  test('no sector map, no sector totals', () => {
+    strictEqual(computeMovers(index, tickers, opts)[0].sectors, undefined);
+  });
+
+  test("sector totals add up, and a sector's own return is pts / (close × weight)", () => {
+    const [day] = computeMovers(index, tickers, { ...opts, sectorOf: { A: 'Financial Services' } });
+    strictEqual(day.sectors['Financial Services'][0], 3333.33);
+    strictEqual(day.sectors['Financial Services'][1], 50);
+    strictEqual(day.sectors.Other[1], -100); // B has no known sector
+    const [bp, pts] = day.sectors['Financial Services'];
+    strictEqual(Math.round(pts / (1500 * bp / 1e4) * 1000) / 1000, 0.1); // A rose 10%
+  });
+
+  test('aggregateMovers still reads the first two fields only', () => {
+    const days = computeMovers(index, tickers, opts);
+    const r = aggregateMovers(days, '2026-10-02', '2026-10-02');
+    strictEqual(r.up[0].pts, 50);
+    strictEqual(r.down[0].pct, -10);
+  });
+});
+
+describe('createTopLists — the session gainers, losers, value and volume', () => {
+  const bars = (closes, volumes, start = 1) => closes.map((c, i) => ({
+    date: `2026-10-${String(start + i).padStart(2, '0')}`, close: c, volume: volumes[i] ?? 100,
+  }));
+
+  test('ranks each list, biggest first, and caps it at n', () => {
+    const t = createTopLists('2026-10-01', 2);
+    t.add('UP10', bars([100, 110], [0, 1000]));
+    t.add('UP20', bars([100, 120], [0, 10]));
+    t.add('UP5', bars([100, 105], [0, 5000]));
+    t.add('DN30', bars([100, 70], [0, 1]));
+    const day = t.result()['2026-10-02'];
+    strictEqual(day.gain.map(r => r[0]).join(), 'UP20,UP10');
+    strictEqual(day.lose.map(r => r[0]).join(), 'DN30');
+    strictEqual(day.volume.map(r => r[0]).join(), 'UP5,UP10');
+    strictEqual(day.value[0][0], 'UP5'); // 105 × 5000
+    strictEqual(day.gain[0][2], 20);     // pct
+    strictEqual(day.value[0][3], 525000);
+  });
+
+  test('a session with no volume did not trade, so it gains nothing', () => {
+    const t = createTopLists('2026-10-01');
+    t.add('HALT', bars([100, 150], [100, 0]));
+    strictEqual(t.result()['2026-10-02'], undefined);
+  });
+
+  test('skips the move across a long gap — a reopening, not a gain', () => {
+    const t = createTopLists('2026-01-01');
+    t.add('SUSP', [{ date: '2026-01-02', close: 100, volume: 10 }, { date: '2026-03-02', close: 170, volume: 10 }]);
+    strictEqual(Object.keys(t.result()).length, 0);
+  });
+
+  test('only sessions from the start date on', () => {
+    const t = createTopLists('2026-10-03');
+    t.add('A', bars([100, 110, 121], [1, 1, 1]));
+    strictEqual(Object.keys(t.result()).join(), '2026-10-03');
   });
 });
