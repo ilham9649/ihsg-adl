@@ -6,12 +6,13 @@ import '../styles/global.css';
 interface Props {
   title: string;
   description: string;
-  current: 'breadth' | 'valuation' | 'sentiment' | 'trend';
+  current: 'map' | 'breadth' | 'valuation' | 'sentiment' | 'trend';
 }
 const { title, description, current } = Astro.props;
 
 const SECTIONS = [
-  { id: 'breadth', href: '/', name: 'Breadth & Momentum' },
+  { id: 'map', href: '/', name: 'Market Map' },
+  { id: 'breadth', href: '/breadth.html', name: 'Breadth & Momentum' },
   { id: 'valuation', href: '/valuation.html', name: 'Valuation' },
   { id: 'sentiment', href: '/sentiment.html', name: 'Sentiment' },
   { id: 'trend', href: '/ma200w.html', name: 'Trend Line' },
