@@ -11,3 +11,7 @@ finance-dashboard*.png
 breadth-chart*.png
 *.screenshot.png
 live-*.png
+
+# Research inputs and caches (large, regenerable)
+research/data/
+__pycache__/

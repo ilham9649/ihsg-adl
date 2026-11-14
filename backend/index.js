@@ -11,7 +11,7 @@ import { ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
 import { computeMovers, moversHistoryStart, BASELINE_FLOATS, aggregateMovers, parseRange, monthsSpanned, MOVERS_SESSIONS } from './scrapers/movers.js';
 import { createTopLists } from './scrapers/toplists.js';
 import { buildFloatSnapshot } from './scrapers/freefloat.js';
-import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, putMovers, getMovers, putMoversMonths, getMoversDays, putFloatSnapshot, getFloatSnapshots, getSectors, putSectors, putTopMonths, getTopDay, acquireRefreshLock, releaseRefreshLock, acquireValuationLock, releaseValuationLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
+import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, putMovers, getMovers, putMoversMonths, getMoversDays, putFloatSnapshot, getFloatSnapshots, getSectors, putSectors, putTopMonths, getTopDay, getBandarmology, getBandarmologyStock, acquireRefreshLock, releaseRefreshLock, acquireValuationLock, releaseValuationLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
 
 const BASE_HEADERS = {
   'Content-Type': 'application/json',
@@ -489,6 +489,22 @@ export const handler = async (event) => {
         stocks,  // [ticker, pts, pct, weightBp, sector]
         top,     // { gain, lose, value, volume }: [ticker, close, pct, value, volume]
       }, { cacheable: true });
+    }
+
+    // Bandarmology: written by the openclaw server job (jobs/bandarmology/), so
+    // there is no refresh route here — the Lambda cannot reach Stockbit.
+    if (method === 'GET' && (path === '/api/bandarmology' || path === '/api/bandarmology/')) {
+      const { updatedAt, asOf, attempted, rows } = await getBandarmology();
+      return response(200, { success: rows.length > 0, updatedAt, asOf, attempted, count: rows.length, data: rows }, { cacheable: true });
+    }
+    // One stock's series. The code is a path segment (CloudFront forwards no
+    // query strings to the API, see the movers range route).
+    const bandarStock = method === 'GET' && path.match(/^\/api\/bandarmology\/([A-Za-z]{4})\/?$/);
+    if (bandarStock) {
+      const code = bandarStock[1].toUpperCase();
+      const stock = await getBandarmologyStock(code);
+      if (!stock) return response(200, { success: false, message: `No bandarmology series for ${code}` }, { cacheable: true });
+      return response(200, { success: true, code, updatedAt: stock.updatedAt, count: stock.series.length, data: stock.series }, { cacheable: true });
     }
 
     // Rides along with /api/ad/refresh like the 200-week page — no refresh route.

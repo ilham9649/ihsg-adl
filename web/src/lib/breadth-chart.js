@@ -27,6 +27,9 @@ export class BreadthChart {
     this.legendLabel = opts.legendLabel || this.tipLabel; // legend swatch label
     this.ref = (opts.ref != null) ? opts.ref : null; // neutral/reference line (e.g. 50)
     this.unit = opts.unit || '';
+    // Decimal places for the axis and tooltip; null keeps the defaults (0, or 1
+    // for '%'). Small-valued readings (a z-score, a ratio) need 1–2.
+    this.decimals = (opts.decimals != null) ? opts.decimals : null;
     // extra moving-average lines: [{ field, color, width, label, legend }]
     this.overlays = opts.overlays || [];
     // Fixed y-domain. Needed when the meaning lives in absolute levels (a
@@ -136,8 +139,13 @@ export class BreadthChart {
   }
 
   _fmt(v) {
-    if (Math.abs(v) >= 1000) return (v / 1000).toFixed(1) + 'k';
-    return Number(v).toFixed(0);
+    const a = Math.abs(v);
+    // Rupiah flows run to trillions; the old 'k' alone would print 1500000.0k.
+    if (a >= 1e12) return (v / 1e12).toFixed(1) + 'T';
+    if (a >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+    if (a >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (a >= 1000) return (v / 1000).toFixed(1) + 'k';
+    return Number(v).toFixed(this.decimals ?? 0);
   }
 
   _draw() {
@@ -485,7 +493,7 @@ export class BreadthChart {
       if (val != null && !this.hidden.has(this.field)) {
         const row = el('div', 'bc-row');
         row.appendChild(el('span', null, this.tipLabel));
-        const b = el('b', null, fmt(val, this.unit === '%' ? 1 : 0) + this.unit);
+        const b = el('b', null, fmt(val, this.decimals ?? (this.unit === '%' ? 1 : 0)) + this.unit);
         b.style.color = above ? this.col.up : this.col.down;
         row.appendChild(b);
         tip.appendChild(row);
@@ -494,7 +502,7 @@ export class BreadthChart {
         if (r[ov.field] == null || this.hidden.has(ov.field)) continue;
         const orow = el('div', 'bc-row');
         orow.appendChild(el('span', null, ov.label));
-        const ob = el('b', null, fmt(r[ov.field], this.unit === '%' ? 1 : 0) + this.unit);
+        const ob = el('b', null, fmt(r[ov.field], this.decimals ?? (this.unit === '%' ? 1 : 0)) + this.unit);
         ob.style.color = ov.color;
         orow.appendChild(ob);
         tip.appendChild(orow);

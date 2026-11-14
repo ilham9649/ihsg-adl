@@ -1,0 +1,129 @@
+---
+import Base from '../layouts/Base.astro';
+import Figure from '../components/Figure.astro';
+---
+<Base title="Bandarmology" current="bandar"
+  description="Broker flow on the IDX's most-traded stocks: big-ticket pressure (LPM), foreign flow, volume rotation and intensity, from the regular-market broker summary.">
+
+  <div class="wrap">
+    <header class="page-head">
+      <div class="kicker">Bandarmology · <span id="universe-count">—</span> most-traded stocks</div>
+      <h1>Who's pressing on the tape</h1>
+      <p class="dek">Four readings of the day's broker summary: whether the brokers trading in unusually big tickets
+        leaned to the buy or the sell side, where foreign money went, how much of the volume was churn, and how
+        concentrated the trading was. They describe the flow. They do not forecast it — see the method note.</p>
+    </header>
+
+    <section class="hero" aria-label="Latest reading">
+      <div class="hero-lead">
+        <div class="hero-label">Big-ticket pressure rising · <span id="hero-date">latest session</span></div>
+        <div class="hero-figure" id="acc-count">—</div>
+        <div class="hero-verdict" id="acc-verdict">Reading the broker summaries…</div>
+        <dl class="hero-meta">
+          <div><dt>Falling</dt><dd id="dist-count">—</dd></div>
+          <div><dt>Quiet accumulation</dt><dd id="div-count">—</dd></div>
+        </dl>
+      </div>
+      <div class="tiles">
+        <div class="tile"><div class="tile-label">LPM rising</div><div class="tile-value up" id="t-acc">—</div><div class="tile-note">20-day change ≥ 1σ</div></div>
+        <div class="tile"><div class="tile-label">LPM falling</div><div class="tile-value down" id="t-dist">—</div><div class="tile-note">20-day change ≤ −1σ</div></div>
+        <div class="tile"><div class="tile-label">Quiet accumulation</div><div class="tile-value" id="t-div">—</div><div class="tile-note">LPM up, price not</div></div>
+        <div class="tile"><div class="tile-label">Foreign, 20 days</div><div class="tile-value" id="t-flow">—</div><div class="tile-note">Net, across these stocks</div></div>
+        <div class="tile"><div class="tile-label">Churning</div><div class="tile-value" id="t-churn">—</div><div class="tile-note">Rotation ≥ 1σ above usual</div></div>
+        <div class="tile"><div class="tile-label">Odd intensity</div><div class="tile-value" id="t-int">—</div><div class="tile-note">Beyond ±2σ of its own</div></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="toolbar">
+    <div class="wrap">
+      <span class="toolbar-label" id="band-label">Show</span>
+      <div class="segmented" id="band" role="group" aria-labelledby="band-label">
+        <button type="button" data-band="all" aria-pressed="true">All</button>
+        <button type="button" data-band="acc" aria-pressed="false">LPM rising</button>
+        <button type="button" data-band="dist" aria-pressed="false">LPM falling</button>
+        <button type="button" data-band="div" aria-pressed="false">Quiet accumulation</button>
+      </div>
+      <span class="spacer"></span>
+      <input type="search" id="search-input" class="search" placeholder="Ticker…" aria-label="Filter by ticker">
+    </div>
+  </div>
+
+  <div class="wrap">
+    <section class="figure" aria-labelledby="stocks-title">
+      <div class="figure-head">
+        <span class="figure-no">Tab. A</span>
+        <h2 id="stocks-title">The board</h2>
+      </div>
+      <div class="table-tools">
+        <p class="figure-dek" style="margin:0">Every stock covered, strongest 20-day LPM rise first. σ readings compare a
+          stock with its own history, so a small cap and BBCA rank on the same footing. Click a row for its charts.</p>
+        <span class="table-count" id="row-count"></span>
+      </div>
+      <div class="table-wrap"><table id="data-table" class="data-table clickable-rows"></table></div>
+      <div class="table-more"><button type="button" class="btn" id="row-more" hidden>Show all</button></div>
+    </section>
+
+    <section class="figure" aria-labelledby="stock-title">
+      <div class="figure-head">
+        <span class="figure-no">Stock</span>
+        <h2 id="stock-title">—</h2>
+        <div class="figure-legend">
+          <label class="visually-hidden" for="stock-select">Stock</label>
+          <select id="stock-select" class="search" style="min-width:8rem"></select>
+        </div>
+      </div>
+      <p class="figure-dek" id="stock-dek">Pick a stock from the board.</p>
+    </section>
+
+    <div class="figure-grid">
+      <Figure no="Fig. I" title="Price" chart="price" size="short" dek="Daily close, rupiah." />
+      <Figure no="Fig. II" title="LPM" chart="lpm" size="short"
+        dek="Running total of big-ticket pressure, from zero at the start of the record. Rising = big tickets leaning to the buy side.">
+        <Fragment slot="how">
+          <p>Each day, a broker's buy side counts if its average ticket (lots per trade) is at least the stock's
+            75th-percentile ticket of the last 200 sessions; sell sides likewise. The day adds the close times the
+            difference between the counted buyers' and sellers' average ticket. Shown scale-free: Bandar Metrics
+            multiplies each stock by its own fixed constant, which changes the height of the line, never its shape.</p>
+        </Fragment>
+      </Figure>
+      <Figure no="Fig. III" title="LPM, day by day" chart="lpmday" size="short"
+        dek="Each session's addition to the line. Green, big buyers outsized big sellers; red, the reverse." />
+      <Figure no="Fig. IV" title="Foreign flow" chart="flow" size="short"
+        dek="Running total of net foreign buying, rupiah, from the start of the record." />
+      <Figure no="Fig. V" title="Volume rotation" chart="vr" size="short"
+        dek="The day's volume over the net amount that changed hands between brokers. High, churn; near 1, one-way flow." />
+      <Figure no="Fig. VI" title="Intensity" chart="int" size="short"
+        dek="Volume over trades to the fourth, log₁₀ — few trades carrying a lot of volume read high. Compare a stock only with itself." />
+    </div>
+
+    <section class="figure" aria-labelledby="method-title">
+      <div class="figure-head">
+        <span class="figure-no">Method</span>
+        <h2 id="method-title">Terms of the reading</h2>
+      </div>
+      <dl class="method">
+        <div><dt>Source</dt><dd>Stockbit's regular-market broker summary (gross: every broker's buy and sell side,
+          with its lots and number of trades) and daily price history, fetched after the close each weekday.
+          The <b>most-traded <span id="m-universe">100</span></b> stocks by median value, re-ranked monthly.</dd></div>
+        <div><dt>LPM</dt><dd>Our reconstruction of Bandar Metrics' Liquidity Pressure Model, which matches its published
+          values exactly once its per-stock constant is applied. Here it is shown <b>scale-free</b> (constant 1): direction and
+          shape are the same, the numbers are not comparable across stocks — use the σ readings for that.</dd></div>
+        <div><dt>σ readings</dt><dd>A 20-day change divided by the stock's own daily-change volatility (up to 250 sessions),
+          or a level against its own history. ±1σ is unusual, ±2σ rare. New listings show none until they have
+          60 sessions.</dd></div>
+        <div><dt>Quiet accumulation</dt><dd>LPM up at least 1σ over 20 sessions while the price is flat or down.</dd></div>
+        <div><dt>Not a signal</dt><dd>Tested on 170 liquid stocks over 2021–2026 (entry the session after the reading,
+          after costs): LPM alone had <b>no reliable edge</b>, "quiet accumulation" was followed by
+          <i>under</i>performance in 2023–24, and filtering momentum by rising LPM made it worse. Foreign flow helped only
+          in 2021–22. Read this page as a description of who traded how, not as a forecast.</dd></div>
+      </dl>
+    </section>
+  </div>
+
+  <style>
+    :global(.clickable-rows tbody tr) { cursor: pointer; }
+    :global(.clickable-rows tbody tr[aria-selected="true"]) { background: var(--paper-deep, rgba(0,0,0,.04)); }
+  </style>
+  <script src="../lib/bandarmology.js"></script>
+</Base>

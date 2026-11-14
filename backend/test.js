@@ -16,6 +16,10 @@ import { valueOn, capWeights, computeMovers, moversHistoryStart, aggregateMovers
 import { parseStat, buildFloatSnapshot, MIN_COVERAGE } from './scrapers/freefloat.js';
 import { createTopLists } from './scrapers/toplists.js';
 import { HSC_SCHEDULE, hscExcludedOn, FLOAT_OVERRIDES, floatOverrideOn } from './lib/ihsg-rules.js';
+import { percentile, windowLotsPerTrade, cutoff, pooledAverage, lpmDay, lpmSeries, constantFromDay } from './scrapers/lpm.js';
+import { LPM_CONSTANTS, LPM_ACTIONS } from './lib/lpm-constants.js';
+import { volumeRotation, intensity, lastZ, changeZ, buildStock } from './scrapers/bandarmology.js';
+import { readFileSync } from 'node:fs';
 
 // Helper: assert the A/D Line cumulative invariant (adLine is a genuine running
 // sum of spreads, never resets).
@@ -1129,5 +1133,107 @@ describe('createTopLists — the session gainers, losers, value and volume', () 
     const t = createTopLists('2026-10-03');
     t.add('A', bars([100, 110, 121], [1, 1, 1]));
     strictEqual(Object.keys(t.result()).join(), '2026-10-03');
+  });
+});
+
+describe('LPM — reproduced Liquidity Pressure Model', () => {
+  const close = (a, b, tol, msg) => ok(Math.abs(a - b) <= tol, `${msg}: ${a} vs ${b}`);
+
+  test('percentile is linear-interpolated (numpy default)', () => {
+    close(percentile([1, 2, 3, 4], 75), 3.25, 1e-12, 'p75 of 1..4');
+    close(percentile([10], 75), 10, 0, 'single value');
+    close(percentile([5, 1, 3], 50), 3, 0, 'unsorted input');
+  });
+
+  test('a side qualifies at the cut-off exactly; none qualifying gives 0', () => {
+    const sides = [{ lots: 100, trades: 2 }, { lots: 30, trades: 1 }, { lots: 9, trades: 1 }];
+    strictEqual(pooledAverage(sides, 30), 130 / 3);   // 50 and 30 qualify, 9 does not
+    strictEqual(pooledAverage(sides, 51), 0);
+    strictEqual(pooledAverage([{ lots: 5, trades: 0 }], 0), 0); // no trades, never counted
+  });
+
+  test('change = k × close × (buyAvg − sellAvg)', () => {
+    const d = lpmDay({ k: 2, close: 100, window: [10, 10, 10, 10], buy: [{ lots: 40, trades: 2 }], sell: [{ lots: 15, trades: 1 }, { lots: 5, trades: 1 }] });
+    strictEqual(d.cutoff, 10);
+    strictEqual(d.buyAvg, 20);
+    strictEqual(d.sellAvg, 15);   // only the 15-lot ticket clears 10
+    strictEqual(d.change, 2 * 100 * 5);
+  });
+
+  test('corporate action: window days before the ex-date are un-adjusted, only once the day is on/after it', () => {
+    const days = [{ date: '2026-07-14', lots: 1000, trades: 10 }, { date: '2026-07-15', lots: 1000, trades: 10 }, { date: '2026-07-16', lots: 500, trades: 10 }];
+    const act = [{ date: '2026-07-16', ratio: 5 }];
+    strictEqual(windowLotsPerTrade(days, '2026-07-16', act).join(), '20,20,50');
+    strictEqual(windowLotsPerTrade(days.slice(0, 2), '2026-07-15', act).join(), '100,100');
+  });
+
+  test('new listing: the listing day never enters the window', () => {
+    const days = [
+      { date: '2026-07-07', close: 100, lots: 90000, trades: 100 },   // listing day: huge tickets
+      { date: '2026-07-08', close: 110, lots: 2000, trades: 100 },
+    ];
+    const summaries = { '2026-07-08': { buy: [{ lots: 60, trades: 2 }], sell: [{ lots: 10, trades: 1 }] } };
+    const s = lpmSeries({ days, summaries, startIndex: 1 });
+    strictEqual(s.length, 1);
+    strictEqual(s[0].cutoff, 20);               // day 1 alone, not the listing day's 900
+    strictEqual(s[0].change, 110 * (30 - 0));   // the 10-lot sell side is below 20
+  });
+
+  test('real day: BBCA 2026-11-11 reproduces Bandar Metrics\' published change', () => {
+    const fx = JSON.parse(readFileSync(new URL('./fixtures/lpm-bbca-2026-11-11.json', import.meta.url)));
+    const window = windowLotsPerTrade(fx.window, fx.date);
+    strictEqual(window.length, 200);
+    const d = lpmDay({ k: LPM_CONSTANTS.BBCA, close: fx.close, window, buy: fx.buy, sell: fx.sell });
+    close(d.change, fx.bandarMetricsChange, Math.abs(fx.bandarMetricsChange) * 1e-5, 'BBCA change');
+    close(constantFromDay({ actualChange: fx.bandarMetricsChange, ...d, close: fx.close }), LPM_CONSTANTS.BBCA, LPM_CONSTANTS.BBCA * 1e-5, 'k read back');
+  });
+
+  test('constants and actions are well-formed', () => {
+    ok(Object.keys(LPM_CONSTANTS).length >= 186);
+    for (const [code, k] of Object.entries(LPM_CONSTANTS)) ok(/^[A-Z]{4}$/.test(code) && k > 0.01 && k < 100, `${code} ${k}`);
+    for (const [code, acts] of Object.entries(LPM_ACTIONS)) {
+      ok(code in LPM_CONSTANTS, `${code} has a constant`);
+      for (const a of acts) ok(/^\d{4}-\d{2}-\d{2}$/.test(a.date) && a.ratio > 1, `${code} ${a.date}`);
+    }
+  });
+});
+
+describe('Bandarmology — per-stock readings', () => {
+  test('volume rotation: total lots over half the net lots that changed hands between brokers', () => {
+    // A buys 100 from B: all of it is one-way flow → rotation 1.
+    strictEqual(volumeRotation([{ broker: 'A', lots: 100 }], [{ broker: 'B', lots: 100 }]), 1);
+    // A and B each buy 50 and sell 50: pure churn, nothing net → no reading.
+    strictEqual(volumeRotation([{ broker: 'A', lots: 50 }, { broker: 'B', lots: 50 }], [{ broker: 'A', lots: 50 }, { broker: 'B', lots: 50 }]), null);
+    // 100 traded, A nets +20, B nets −20 → 100 / 20 = 5.
+    strictEqual(volumeRotation([{ broker: 'A', lots: 60 }, { broker: 'B', lots: 40 }], [{ broker: 'A', lots: 40 }, { broker: 'B', lots: 60 }]), 5);
+  });
+
+  test('intensity is shares over trades to the fourth; no trades gives no reading', () => {
+    strictEqual(intensity(10, 10), 1000 / 1e4);
+    strictEqual(intensity(10, 0), null);
+  });
+
+  test('z-scores need enough history and use it, not more', () => {
+    strictEqual(lastZ(Array(59).fill(1)), null);
+    const flat = Array(100).fill(0).map((_, i) => i % 2);      // 0,1,0,1…
+    ok(Math.abs(lastZ(flat) - 0.995) < 0.01);                    // last value 1 against mean 0.5, sd ~0.5025
+    const line = Array.from({ length: 200 }, (_, i) => i * 3);  // constant daily change → zero volatility
+    strictEqual(changeZ(line), null);
+  });
+
+  test('buildStock: LPM and foreign flow start at zero on the first broker-summary day', () => {
+    const days = Array.from({ length: 30 }, (_, i) => ({
+      date: `2026-01-${String(i + 1).padStart(2, '0')}`, close: 100 + i, lots: 1000, trades: 100, value: 1e10, netForeign: 5,
+    }));
+    const summaries = {};
+    for (const d of days.slice(-5)) summaries[d.date] = { buy: [{ broker: 'A', lots: 300, trades: 10 }], sell: [{ broker: 'B', lots: 300, trades: 30 }] };
+    const { row, series } = buildStock({ code: 'TEST', days, summaries });
+    strictEqual(series.length, 5);
+    strictEqual(series[0].flow, 5);                       // its own day only
+    strictEqual(series[0].lpmChange, series[0].close * (30 - 10)); // cut-off 10: buy 30/ticket qualifies, sell 10/ticket too
+    strictEqual(series[4].lpm, series.reduce((t, s) => t + s.lpmChange, 0));
+    strictEqual(row.code, 'TEST');
+    strictEqual(row.date, days[29].date);
+    strictEqual(row.lpm20z, null);                        // 5 sessions is not enough history
   });
 });
