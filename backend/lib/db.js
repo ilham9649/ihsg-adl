@@ -507,6 +507,59 @@ async function releaseLock(key) {
   }));
 }
 
+// ── Bandarmology ──
+// Written by the job on the openclaw server (jobs/bandarmology/), never by the
+// Lambda: the broker data comes from Stockbit, which needs a personal login.
+// Two shapes, like Trend Line: one summary item (`_bandarmology`, the screener,
+// ~100 rows ≈ 25KB) and one item per stock (`bm#CODE`, its chart series,
+// ~130 sessions ≈ 15KB) so a stock page reads only its own history.
+const BANDAR_KEY = '_bandarmology';
+const BANDAR_PREFIX = 'bm#';
+
+export async function putBandarmology({ asOf, rows, attempted }, seriesByCode) {
+  const items = Object.entries(seriesByCode).map(([code, series]) => ({
+    PutRequest: { Item: { date: { S: BANDAR_PREFIX + code }, updatedAt: { S: new Date().toISOString() }, series: { S: JSON.stringify(series) } } },
+  }));
+  for (let i = 0; i < items.length; i += 25) {
+    let pending = { [TABLE_NAME]: items.slice(i, i + 25) };
+    // BatchWriteItem may hand some writes back under load; retry those.
+    for (let tries = 0; pending[TABLE_NAME]?.length && tries < 5; tries++) {
+      const res = await client.send(new BatchWriteItemCommand({ RequestItems: pending }));
+      pending = res.UnprocessedItems || {};
+      if (pending[TABLE_NAME]?.length) await new Promise(r => setTimeout(r, 500 * 2 ** tries));
+    }
+    if (pending[TABLE_NAME]?.length) throw new Error(`bandarmology: ${pending[TABLE_NAME].length} stock items not written`);
+  }
+  // The summary last, so the page never lists a stock whose series isn't stored.
+  await client.send(new PutItemCommand({
+    TableName: TABLE_NAME,
+    Item: {
+      date: { S: BANDAR_KEY },
+      updatedAt: { S: new Date().toISOString() },
+      asOf: { S: asOf },
+      attempted: { N: String(attempted) },
+      rows: { S: JSON.stringify(rows) },
+    },
+  }));
+}
+
+export async function getBandarmology() {
+  const result = await client.send(new GetItemCommand({ TableName: TABLE_NAME, Key: { date: { S: BANDAR_KEY } } }));
+  if (!result.Item?.rows?.S) return { updatedAt: null, asOf: null, attempted: 0, rows: [] };
+  return {
+    updatedAt: result.Item.updatedAt?.S || null,
+    asOf: result.Item.asOf?.S || null,
+    attempted: result.Item.attempted?.N ? parseInt(result.Item.attempted.N, 10) : 0,
+    rows: JSON.parse(result.Item.rows.S),
+  };
+}
+
+export async function getBandarmologyStock(code) {
+  const result = await client.send(new GetItemCommand({ TableName: TABLE_NAME, Key: { date: { S: BANDAR_PREFIX + code } } }));
+  if (!result.Item?.series?.S) return null;
+  return { updatedAt: result.Item.updatedAt?.S || null, series: JSON.parse(result.Item.series.S) };
+}
+
 // ── Refresh Lock — prevents two overlapping full-universe A/D scrapes ──
 const LOCK_KEY = '_refresh_lock';
 const LOCK_TTL_MS = 30 * 60 * 1000; // 30 minutes

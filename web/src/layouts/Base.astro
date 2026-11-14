@@ -6,7 +6,7 @@ import '../styles/global.css';
 interface Props {
   title: string;
   description: string;
-  current: 'map' | 'breadth' | 'valuation' | 'sentiment' | 'trend';
+  current: 'map' | 'breadth' | 'valuation' | 'sentiment' | 'trend' | 'bandar';
 }
 const { title, description, current } = Astro.props;
 
@@ -16,6 +16,7 @@ const SECTIONS = [
   { id: 'valuation', href: '/valuation.html', name: 'Valuation' },
   { id: 'sentiment', href: '/sentiment.html', name: 'Sentiment' },
   { id: 'trend', href: '/ma200w.html', name: 'Trend Line' },
+  { id: 'bandar', href: '/bandarmology.html', name: 'Bandarmology' },
 ];
 const fullTitle = `${title} — The Jakarta Ledger`;
 const canonical = new URL(Astro.url.pathname, Astro.site);
