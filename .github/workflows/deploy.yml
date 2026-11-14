@@ -83,7 +83,7 @@ jobs:
         run: |
           cd backend
           npm ci
-          zip -r ../function.zip .
+          zip -r ../function.zip . -x 'fixtures/*' test.js
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4

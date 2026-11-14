@@ -15,7 +15,7 @@
 //   4. change(d) = k_S × close(d) × (buyAvg − sellAvg)
 //   5. LPM(d)    = running sum of change from the first day
 //
-// k_S is a fixed per-stock scale (lib/lpm-constants.js) — it does not change
+// k_S is a fixed per-stock scale (fixtures/lpm-constants.js, test data) — it does not change
 // the shape of a stock's line, only its height, so signals can use k = 1.
 //
 // ⚠️ INPUTS MUST BE GROSS, PER BROKER, WITH TRADE COUNTS. A net broker summary
@@ -28,7 +28,7 @@
 //   - New listing: LPM starts on the trading day AFTER listing; the listing day
 //     is never in the window (pass `startIndex: 1`).
 //   - Corporate actions: Bandar Metrics keeps RAW lots/trade in the window, so a
-//     split-adjusted history must be un-adjusted (`actions`, see lpm-constants).
+//     split-adjusted history must be un-adjusted (`actions`, see fixtures/lpm-constants.js).
 //   - Close price, not VWAP or brokers' average price (those miss by ~0.5%).
 //   - History is never recalculated; values before ~19 Aug 2020 match Stockbit
 //     data, values from then until ~late 2022 were built from a broker feed that

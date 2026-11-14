@@ -11,6 +11,7 @@
 // A stock not listed here has no known k — measure it from one published day
 // with `constantFromDay` in scrapers/lpm.js. k only scales the line: direction,
 // divergence and crossovers are the same for any k (use 1 for signals).
+// Test data only (backend/test.js): the page and the server job use k = 1.
 
 export const LPM_CONSTANTS = {
   AADI: 0.7733675, AALI: 0.07059798, ABMM: 0.01527882, ACES: 4.206401, ADMR: 0.09090707, ADRO: 1.997694,

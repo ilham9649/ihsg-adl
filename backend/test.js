@@ -17,7 +17,7 @@ import { parseStat, buildFloatSnapshot, MIN_COVERAGE } from './scrapers/freefloa
 import { createTopLists } from './scrapers/toplists.js';
 import { HSC_SCHEDULE, hscExcludedOn, FLOAT_OVERRIDES, floatOverrideOn } from './lib/ihsg-rules.js';
 import { percentile, windowLotsPerTrade, cutoff, pooledAverage, lpmDay, lpmSeries, constantFromDay } from './scrapers/lpm.js';
-import { LPM_CONSTANTS, LPM_ACTIONS } from './lib/lpm-constants.js';
+import { LPM_CONSTANTS, LPM_ACTIONS } from './fixtures/lpm-constants.js';
 import { volumeRotation, intensity, lastZ, changeZ, buildStock } from './scrapers/bandarmology.js';
 import { readFileSync } from 'node:fs';
 
