@@ -52,8 +52,13 @@ for (const code of codes) {
   const built = buildStock({ code, days, summaries, actions, listed });
   if (!built) continue;
   rows.push(built.row);
-  // Compact for storage: rounded, short keys the page maps back.
-  seriesByCode[code] = built.series.map(s => [s.date, s.close, +s.lpm.toPrecision(7), +s.lpmChange.toPrecision(6), Math.round(s.flow), s.vr == null ? null : +s.vr.toFixed(3), s.intensity == null ? null : +s.intensity.toPrecision(4)]);
+  // Compact for storage: rounded, short keys the page maps back. Open, high
+  // and low go last so a page that only knows the first seven fields still reads it.
+  const bar = new Map(days.map(d => [d.date, d]));
+  seriesByCode[code] = built.series.map(s => {
+    const d = bar.get(s.date) || {};
+    return [s.date, s.close, +s.lpm.toPrecision(7), +s.lpmChange.toPrecision(6), Math.round(s.flow), s.vr == null ? null : +s.vr.toFixed(3), s.intensity == null ? null : +s.intensity.toPrecision(4), d.open ?? null, d.high ?? null, d.low ?? null];
+  });
   if (built.row.date > asOf) asOf = built.row.date;
 }
 
