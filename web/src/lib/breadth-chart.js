@@ -46,6 +46,9 @@ export class BreadthChart {
     // with no red/green fill — for oscillators whose meaning is in the bands.
     this.area = opts.area !== false;
     this.lineColor = opts.lineColor || null;
+    // Tooltip value colour; null colours it green/red by sign. A plain level
+    // (a price) is neither, and a dark line colour vanishes on the dark tooltip.
+    this.tipColor = opts.tipColor || null;
     this.hidden = new Set(); // line keys (field names, or 'daily') toggled off
     this.data = [];
     this.dpr = Math.max(1, window.devicePixelRatio || 1);
@@ -494,7 +497,7 @@ export class BreadthChart {
         const row = el('div', 'bc-row');
         row.appendChild(el('span', null, this.tipLabel));
         const b = el('b', null, fmt(val, this.decimals ?? (this.unit === '%' ? 1 : 0)) + this.unit);
-        b.style.color = above ? this.col.up : this.col.down;
+        b.style.color = this.tipColor || (above ? this.col.up : this.col.down);
         row.appendChild(b);
         tip.appendChild(row);
       }
