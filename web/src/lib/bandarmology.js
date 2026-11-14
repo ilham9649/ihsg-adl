@@ -1,13 +1,13 @@
 // ──────────────────────────────────────────────
-// Bandarmology — a stock list beside one stock's charts.
+// Bandarmology — a stock list beside one stock's chart.
 // The openclaw server job computes everything (backend/scrapers/bandarmology.js,
 // jobs/bandarmology/); this page lists the stocks and charts the one picked.
 // Readings are put in words here: lpm20z → "Strong buying" … "Strong selling".
 // ──────────────────────────────────────────────
-import { BreadthChart } from './breadth-chart.js';
+import { PaneChart } from './pane-chart.js';
 import { getJson, setFreshness, setFreshnessError, debounce } from './shared.js';
 
-const INK = '#1a1714', GOLD = '#a67a26', SLATE = '#3f5170';
+const GOLD = '#a67a26', SLATE = '#3f5170';
 
 let rows = [];
 let band = 'all';
@@ -128,16 +128,53 @@ function markSelected() {
   for (const li of $('bm-rows').children) li.setAttribute('aria-selected', String(li.dataset.code === current));
 }
 
-// ── One stock ──
-const charts = {};
-const SPECS = {
-  price: { field: 'close', area: false, lineColor: INK, tipColor: 'inherit', tipLabel: 'Close' },
-  lpm: { field: 'lpm', area: false, lineColor: GOLD, tipColor: 'inherit', tipLabel: 'Pressure' },
-  flow: { field: 'flow', ref: 0, tipLabel: 'Foreign' },
-  lpmday: { field: 'lpmChange', ref: 0, tipLabel: 'Day' },
-  vr: { field: 'vr', area: false, lineColor: SLATE, tipColor: 'inherit', tipLabel: 'Churn', decimals: 2 },
-  int: { field: 'intensity', area: false, lineColor: SLATE, tipColor: 'inherit', tipLabel: 'Level', decimals: 1 },
+// ── One stock: one chart, price on top, the readings picked underneath ──
+const PANES = {
+  price: { label: 'Price', kind: 'candle', height: 300, fmt: v => Math.round(v).toLocaleString('en-US') },
+  lpm: { label: 'Big-money pressure', tipLabel: 'Pressure', kind: 'line', field: 'lpm', color: GOLD, height: 120,
+    note: 'Rises on days when large orders lean to buying, falls when they lean to selling. The direction matters, not the level.' },
+  lpmday: { label: 'Day by day', tipLabel: 'Big money, day', kind: 'bars', field: 'lpmChange', height: 90, signColor: true,
+    note: "Each session's push. Green, large buyers outweighed large sellers; red, the reverse." },
+  flow: { label: 'Foreign money', tipLabel: 'Foreign', kind: 'line', field: 'flow', area0: true, height: 110, signColor: true,
+    tipFmt: v => rp(v).replace(/^([+−])/, '$1Rp '),
+    note: 'Running total of foreign buying minus selling, in rupiah.' },
+  vr: { label: 'Churn', kind: 'line', field: 'vr', color: SLATE, height: 90, fmt: v => v.toFixed(1), tipFmt: v => v.toFixed(2),
+    note: 'How many times the shares that changed hands were traded back and forth. Near 1, one-way flow; high, brokers trading with each other.' },
+  int: { label: 'Order concentration', tipLabel: 'Concentration', kind: 'line', field: 'intensity', color: SLATE, height: 90, fmt: v => v.toFixed(1),
+    note: 'High when a lot of volume goes through few trades. Compare a stock only with its own past.' },
 };
+const PANE_KEY = 'bm-panes';
+let chart = null;
+
+function chosenPanes() {
+  return [...document.querySelectorAll('#pane-toggles input')].filter(i => i.checked).map(i => i.dataset.pane);
+}
+
+// Price, then the ticked readings in the order of the toggles.
+function applyPanes() {
+  const ids = chosenPanes();
+  const small = matchMedia('(max-width: 720px)').matches;
+  const panes = [{ ...PANES.price, height: small ? 220 : PANES.price.height }, ...ids.map(id => PANES[id])];
+  chart?.setPanes(panes);
+  $('pane-key').replaceChildren(...ids.map(id => {
+    const d = document.createElement('div');
+    const dt = document.createElement('dt'); dt.textContent = PANES[id].label;
+    const dd = document.createElement('dd'); dd.textContent = PANES[id].note;
+    d.append(dt, dd);
+    return d;
+  }));
+}
+
+// The reader's pick of readings is kept for their next visit (a convenience: without storage it falls back to the defaults).
+try {
+  const saved = JSON.parse(localStorage.getItem(PANE_KEY) || 'null');
+  if (Array.isArray(saved)) document.querySelectorAll('#pane-toggles input').forEach(i => { i.checked = saved.includes(i.dataset.pane); });
+} catch { /* no storage */ }
+document.querySelectorAll('#pane-toggles input').forEach(i => i.addEventListener('change', () => {
+  try { localStorage.setItem(PANE_KEY, JSON.stringify(chosenPanes())); } catch { /* no storage */ }
+  applyPanes();
+}));
+matchMedia('(max-width: 720px)').addEventListener('change', applyPanes);
 
 function renderFacts(r) {
   const facts = [
@@ -175,24 +212,19 @@ async function loadStock(code, { scroll = false } = {}) {
   if (!series) {
     const payload = await getJson(`/api/bandarmology/${code}`);
     if (!payload.success) { $('stock-read').textContent = `No history stored for ${code} yet.`; return; }
-    // [date, close, lpm, lpmChange, flow, rotation, intensity] — see jobs/bandarmology/build.mjs
-    series = payload.data.map(([date, close, lpm, lpmChange, flow, vr, intensity]) => ({
-      date, close, lpm, lpmChange, flow, vr, intensity: intensity > 0 ? Math.log10(intensity) : null,
+    // [date, close, lpm, lpmChange, flow, rotation, intensity, open, high, low] — see jobs/bandarmology/build.mjs.
+    // Series stored before open/high/low were added end at intensity; their candles draw as ticks at the close.
+    series = payload.data.map(([date, close, lpm, lpmChange, flow, vr, intensity, open, high, low]) => ({
+      date, open, high, low, close, lpm, lpmChange, flow, vr, intensity: intensity > 0 ? Math.log10(intensity) : null,
     }));
     seriesCache.set(code, series);
   }
   if (current !== code) return; // a newer pick arrived while this one loaded
-  const list = [];
-  for (const [id, spec] of Object.entries(SPECS)) {
-    if (!charts[id]) charts[id] = new BreadthChart($(id + '-chart'), $(id + '-tip'), { panel: 'series', legend: false, tipAd: false, ...spec });
-    charts[id].setData(series);
-    list.push(charts[id]);
+  if (!chart) {
+    chart = new PaneChart($('bm-chart'), $('bm-tip'));
+    applyPanes();
   }
-  // One date axis down the column: hovering any chart marks them all.
-  for (const c of list) {
-    c.onHover = i => list.forEach(o => o !== c && o.setHover(i));
-    c.onLeave = () => list.forEach(o => o !== c && o.clearHover());
-  }
+  chart.setData(series);
 }
 
 function pick(code, opts) {

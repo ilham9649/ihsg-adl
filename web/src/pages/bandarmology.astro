@@ -46,39 +46,20 @@ import Base from '../layouts/Base.astro';
       <p class="bm-read" id="stock-read" aria-live="polite">Loading the broker summaries…</p>
       <dl class="bm-facts" id="stock-facts"></dl>
 
-      <div class="bm-chart">
-        <h3>Price</h3>
-        <div class="chart"><canvas id="price-chart" class="bm-tall" role="img" aria-label="Price chart"></canvas><div class="bc-tip" id="price-tip"></div></div>
-      </div>
-      <div class="bm-chart">
-        <h3>Big-money pressure</h3>
-        <p>Rises on days when large orders lean to buying, falls when they lean to selling. What matters is the direction, not the level.</p>
-        <div class="chart"><canvas id="lpm-chart" role="img" aria-label="Big-money pressure chart"></canvas><div class="bc-tip" id="lpm-tip"></div></div>
-      </div>
-      <div class="bm-chart">
-        <h3>Foreign money</h3>
-        <p>Running total of foreign buying minus selling, in rupiah.</p>
-        <div class="chart"><canvas id="flow-chart" role="img" aria-label="Foreign money chart"></canvas><div class="bc-tip" id="flow-tip"></div></div>
-      </div>
-
-      <details class="bm-more">
-        <summary>More readings</summary>
-        <div class="bm-chart">
-          <h3>Big money, day by day</h3>
-          <p>Each session's push. Green, large buyers outweighed large sellers; red, the reverse.</p>
-          <div class="chart"><canvas id="lpmday-chart" role="img" aria-label="Daily big-money chart"></canvas><div class="bc-tip" id="lpmday-tip"></div></div>
+      <figure class="bm-chart">
+        <div class="bm-chart-head">
+          <h3>Price and broker flow</h3>
+          <div class="bm-toggles" id="pane-toggles" role="group" aria-label="Readings under the price">
+            <label class="legend-chip" style="--sw: var(--gold)"><input type="checkbox" data-pane="lpm" checked><span class="sw"></span><span>Big-money pressure</span></label>
+            <label class="legend-chip" style="--sw: linear-gradient(90deg, var(--up) 50%, var(--down) 50%)"><input type="checkbox" data-pane="lpmday"><span class="sw"></span><span>Day by day</span></label>
+            <label class="legend-chip" style="--sw: linear-gradient(90deg, var(--up) 50%, var(--down) 50%)"><input type="checkbox" data-pane="flow" checked><span class="sw"></span><span>Foreign money</span></label>
+            <label class="legend-chip" style="--sw: var(--slate)"><input type="checkbox" data-pane="vr"><span class="sw"></span><span>Churn</span></label>
+            <label class="legend-chip" style="--sw: var(--slate)"><input type="checkbox" data-pane="int"><span class="sw"></span><span>Order concentration</span></label>
+          </div>
         </div>
-        <div class="bm-chart">
-          <h3>Churn</h3>
-          <p>How many times the shares that actually changed hands were traded back and forth. Near 1, one-way flow; high, brokers trading with each other.</p>
-          <div class="chart"><canvas id="vr-chart" role="img" aria-label="Churn chart"></canvas><div class="bc-tip" id="vr-tip"></div></div>
-        </div>
-        <div class="bm-chart">
-          <h3>Order concentration</h3>
-          <p>High when a lot of volume goes through few trades. Only compare a stock with its own past.</p>
-          <div class="chart"><canvas id="int-chart" role="img" aria-label="Order concentration chart"></canvas><div class="bc-tip" id="int-tip"></div></div>
-        </div>
-      </details>
+        <div class="chart"><canvas id="bm-chart" role="img" aria-label="Daily price candles with the chosen broker-flow readings underneath, on one date axis"></canvas><div class="bc-tip" id="bm-tip"></div></div>
+        <dl class="bm-key" id="pane-key"></dl>
+      </figure>
     </section>
   </div>
 
@@ -181,14 +162,15 @@ import Base from '../layouts/Base.astro';
     .bm-facts dt { font-size: .92rem; color: var(--ink-soft); }
     .bm-facts dd { margin: 4px 0 0; font: 600 1.15rem/1.2 var(--mono); font-feature-settings: 'tnum' 1; }
 
-    .bm-chart { margin-top: 28px; }
-    .bm-chart h3 { margin: 0; font: 600 1.15rem/1.2 var(--display); }
-    .bm-chart p { margin: 4px 0 8px; color: var(--ink-soft); font-size: .98rem; max-width: 70ch; }
-    .bm-chart .chart canvas { height: 190px; }
-    .bm-chart .chart canvas.bm-tall { height: 320px; }
-    .bm-more { margin-top: 32px; border-top: 1px solid var(--rule); padding-top: 16px; }
-    .bm-more summary { cursor: pointer; font: 600 1.05rem/1.2 var(--display); }
-    .bm-more summary:hover { color: var(--gold); }
+    .bm-chart { margin: 28px 0 0; }
+    .bm-chart-head { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; margin-bottom: 6px; }
+    .bm-chart-head h3 { margin: 0; font: 600 1.15rem/1.2 var(--display); }
+    .bm-toggles { display: flex; gap: 6px; flex-wrap: wrap; }
+    .bm-toggles .sw { background: var(--sw); }
+    .bm-key { margin: 14px 0 0; display: grid; gap: 8px; max-width: 72ch; }
+    .bm-key div { display: grid; grid-template-columns: 11rem 1fr; gap: 12px; }
+    .bm-key dt { font: 600 .74rem/1.5 var(--mono); text-transform: uppercase; letter-spacing: .02em; }
+    .bm-key dd { margin: 0; color: var(--ink-soft); font-size: .98rem; line-height: 1.45; }
 
     .bm-notes { padding: 48px 0 8px; border-top: 1px solid var(--rule); }
     .bm-notes h2 { margin: 0 0 6px; font: 600 clamp(1.4rem, 2.4vw, 1.75rem)/1.15 var(--display); letter-spacing: -.01em; }
@@ -209,7 +191,7 @@ import Base from '../layouts/Base.astro';
       /* No room for bar and word: the word carries the reading. */
       .bm-pressure { grid-template-columns: 1fr; }
       .bm-bar { display: none; }
-      .bm-chart .chart canvas.bm-tall { height: 260px; }
+      .bm-key div { grid-template-columns: 1fr; gap: 2px; }
     }
   </style>
   <script src="../lib/bandarmology.js"></script>
