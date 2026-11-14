@@ -8,16 +8,23 @@ the server's existing client (idx_common.stockbit_get), so it never reads or
 handles the token itself.
 
 Cache layout (BANDARMOLOGY_CACHE, default /root/bandarmology-cache):
-  universe.json          {"asOf", "codes": [...]}   top N by median traded value, rebuilt monthly
+  universe.json          {"asOf", "rule", "hscFrom", "codes": [...]}   which stocks, most traded first;
+                         rebuilt monthly, when the rule changes, or when IDX's HSC list does
   hist/CODE.json         {date: daily row}          Stockbit daily history (~500 calendar days)
   bs/CODE/DATE.json      {"buy": [...], "sell": [...]}  regular-market gross broker summary
   actions/CODE.json      [{"date", "ratio", "type"}]    splits / reverse splits / rights issues
   status.json            what the last run did, or why it stopped
 
-Usage: fetch_stockbit.py [--sessions 126] [--universe 100] [--codes BBCA,TLKM]
+Universe: the TOP most-traded stocks (any board, HSC or not), plus every other
+stock that is NOT on IDX's High Shareholding Concentration list and traded on at
+least MIN_TRADED_DAYS of the last ~60 sessions. The big-money calculation needs a
+real spread of trades, so stocks that seldom trade are left out. The HSC list in
+force comes from backend/lib/ihsg-rules.js through hsc.mjs.
+
+Usage: fetch_stockbit.py [--sessions 126] [--top 100] [--codes BBCA,TLKM]
 Exit codes: 0 ok, 3 Stockbit login expired (renew the token), 1 anything else.
 """
-import argparse, datetime as dt, json, os, re, sys, time
+import argparse, datetime as dt, json, os, re, subprocess, sys, time
 
 SCRIPTS = os.environ.get('STOCKBIT_SCRIPTS', '/root/.openclaw/workspace/skills/stockbit/scripts')
 CACHE = os.environ.get('BANDARMOLOGY_CACHE', '/root/bandarmology-cache')
@@ -25,7 +32,9 @@ TICKERS_JS = os.environ.get('TICKERS_JS', os.path.join(os.path.dirname(os.path.a
 PAUSE = 1.1           # seconds between Stockbit calls
 HIST_DAYS = 520       # calendar days of daily history: 200-session window + ~6 months + slack
 REFRESH_TAIL = 10     # re-fetch the last N days of history each run (late corrections)
-UNIVERSE_MAX_AGE = 30 # days before the top-N universe is re-ranked
+UNIVERSE_MAX_AGE = 30 # days before the universe is re-ranked
+MIN_TRADED_DAYS = 40  # of the ~60 sessions in the 95-day ranking window
+RULE = 'top{top}+non-hsc-traded{days}'
 
 sys.path.insert(0, SCRIPTS)
 import idx_common as C  # noqa: E402  (the server's Stockbit client)
@@ -131,7 +140,15 @@ def fetch_actions(code):
     return sorted(out, key=lambda a: a['date'])
 
 
-def rebuild_universe(today, size):
+def hsc_list(today):
+    """The HSC list in force today, from the one copy of it (backend/lib/ihsg-rules.js)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    out = subprocess.run(['node', os.path.join(here, 'hsc.mjs'), today.isoformat()],
+                         capture_output=True, text=True, check=True, timeout=60).stdout
+    return json.loads(out)
+
+
+def rebuild_universe(today, top, hsc):
     codes = sorted(set(re.findall(r"'([A-Z]{4})'", open(TICKERS_JS).read())))
     start = (today - dt.timedelta(days=95)).isoformat()
     ranked = []
@@ -143,20 +160,29 @@ def rebuild_universe(today, size):
         except Exception:
             continue
         vals = sorted(v['value'] or 0 for v in h.values() if (v.get('frequency') or 0) > 0)
-        if len(vals) >= 40:
+        if len(vals) >= MIN_TRADED_DAYS:
             ranked.append((vals[len(vals) // 2], code))
         if i % 100 == 0:
             print(f'universe: ranked {i}/{len(codes)}', flush=True)
     ranked.sort(reverse=True)
-    uni = {'asOf': today.isoformat(), 'codes': [c for _, c in ranked[:size]]}
+    excluded = set(hsc['tickers'])
+    # Most traded first, so a long first back-fill fills the page from the top.
+    picked = [c for n, (_, c) in enumerate(ranked) if n < top or c not in excluded]
+    uni = {'asOf': today.isoformat(), 'rule': RULE.format(top=top, days=MIN_TRADED_DAYS), 'hscFrom': hsc['from'], 'codes': picked}
     save(os.path.join(CACHE, 'universe.json'), uni)
+    print(f'universe: {len(picked)} stocks ({min(top, len(ranked))} most traded + non-HSC trading most days)', flush=True)
     return uni
+
+
+def stale(uni, today, top, hsc):
+    return (not uni or (today - dt.date.fromisoformat(uni['asOf'])).days > UNIVERSE_MAX_AGE
+            or uni.get('rule') != RULE.format(top=top, days=MIN_TRADED_DAYS) or uni.get('hscFrom') != hsc['from'])
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--sessions', type=int, default=126, help='broker-summary sessions to keep per stock')
-    ap.add_argument('--universe', type=int, default=100)
+    ap.add_argument('--top', type=int, default=100, help='most-traded stocks kept even when on the HSC list')
     ap.add_argument('--codes', help='comma-separated codes instead of the ranked universe (testing)')
     a = ap.parse_args()
     today = dt.date.today()
@@ -166,8 +192,9 @@ def main():
             codes = a.codes.split(',')
         else:
             uni = load(os.path.join(CACHE, 'universe.json'), None)
-            if not uni or (today - dt.date.fromisoformat(uni['asOf'])).days > UNIVERSE_MAX_AGE:
-                uni = rebuild_universe(today, a.universe)
+            hsc = hsc_list(today)
+            if stale(uni, today, a.top, hsc):
+                uni = rebuild_universe(today, a.top, hsc)
             codes = uni['codes']
         fetched = 0
         for n, code in enumerate(codes, 1):

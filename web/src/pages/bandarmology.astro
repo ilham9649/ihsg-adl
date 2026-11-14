@@ -2,12 +2,12 @@
 import Base from '../layouts/Base.astro';
 ---
 <Base title="Bandarmology" current="bandar"
-  description="Who is buying big and who is selling on the IDX's most-traded stocks: big-money pressure, foreign money and churn, from the daily broker summary.">
+  description="Who is buying big and who is selling on the IDX stocks that trade every day: big-money pressure, foreign money and churn, from the daily broker summary.">
 
   <div class="wrap">
     <header class="page-head bm-head">
       <h1>Who's buying big, who's selling</h1>
-      <p class="dek">For the most-traded stocks on the IDX: whether the brokers trading in unusually large orders
+      <p class="dek">For the IDX stocks that trade every day: whether the brokers trading in unusually large orders
         leaned to buying or selling, and where foreign money went. This shows what happened, not what happens next.</p>
     </header>
   </div>
@@ -49,6 +49,11 @@ import Base from '../layouts/Base.astro';
       <figure class="bm-chart">
         <div class="bm-chart-head">
           <h3>Price and broker flow</h3>
+          <div class="segmented bm-range" id="range" role="group" aria-label="Time range">
+            <button type="button" data-sessions="21" aria-pressed="false" title="Last 21 sessions">1M</button>
+            <button type="button" data-sessions="63" aria-pressed="false" title="Last 63 sessions">3M</button>
+            <button type="button" data-sessions="0" aria-pressed="true" title="All stored sessions, about six months">6M</button>
+          </div>
           <div class="bm-toggles" id="pane-toggles" role="group" aria-label="Readings under the price">
             <label class="legend-chip" style="--sw: var(--gold)"><input type="checkbox" data-pane="lpm" checked><span class="sw"></span><span>Big-money pressure</span></label>
             <label class="legend-chip" style="--sw: linear-gradient(90deg, var(--up) 50%, var(--down) 50%)"><input type="checkbox" data-pane="lpmday"><span class="sw"></span><span>Day by day</span></label>
@@ -93,7 +98,9 @@ import Base from '../layouts/Base.astro';
         <div>
         <h3>Where the numbers come from</h3>
         <p>Stockbit's daily broker summary: every broker's buying and selling in each stock, with lots and number of
-          trades. It's updated after the close each weekday for the 100 most-traded stocks by daily value.
+          trades. It's updated after the close each weekday for the 100 most-traded stocks by daily value, plus every
+          other stock that traded on most days of the last three months, except those on IDX's high-concentration (HSC)
+          list, where the ten largest holders own 92.5% or more of the shares and few are left to trade.
           Big-money pressure follows Bandar Metrics' Liquidity Pressure Model (LPM). Bandar Metrics multiplies each stock's
           line by its own fixed number; we leave that out, so the shape matches theirs but the numbers don't.</p>
         </div>
@@ -165,7 +172,8 @@ import Base from '../layouts/Base.astro';
     .bm-chart { margin: 28px 0 0; }
     .bm-chart-head { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; margin-bottom: 6px; }
     .bm-chart-head h3 { margin: 0; font: 600 1.15rem/1.2 var(--display); }
-    .bm-toggles { display: flex; gap: 6px; flex-wrap: wrap; }
+    .bm-range { margin-left: auto; }
+    .bm-toggles { display: flex; gap: 6px; flex-wrap: wrap; flex-basis: 100%; }
     .bm-toggles .sw { background: var(--sw); }
     .bm-key { margin: 14px 0 0; display: grid; gap: 8px; max-width: 72ch; }
     .bm-key div { display: grid; grid-template-columns: 11rem 1fr; gap: 12px; }

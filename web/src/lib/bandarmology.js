@@ -143,8 +143,28 @@ const PANES = {
   int: { label: 'Order concentration', tipLabel: 'Concentration', kind: 'line', field: 'intensity', color: SLATE, height: 90, fmt: v => v.toFixed(1),
     note: 'High when a lot of volume goes through few trades. Compare a stock only with its own past.' },
 };
-const PANE_KEY = 'bm-panes';
+const PANE_KEY = 'bm-panes', RANGE_KEY = 'bm-range';
 let chart = null;
+let sessions = 0; // sessions shown, most recent last; 0 = everything stored (~6 months)
+let shownSeries = [];
+
+// The chart shows the last `sessions` of the stock's series; every scale refits to it.
+function drawRange() {
+  if (chart) chart.setData(sessions ? shownSeries.slice(-sessions) : shownSeries);
+}
+function setRange(n) {
+  sessions = n;
+  document.querySelectorAll('#range button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.sessions === n)));
+  drawRange();
+}
+try {
+  const saved = Number(localStorage.getItem(RANGE_KEY));
+  if ([21, 63].includes(saved)) setRange(saved);
+} catch { /* no storage */ }
+document.querySelectorAll('#range button').forEach(b => b.addEventListener('click', () => {
+  setRange(+b.dataset.sessions);
+  try { localStorage.setItem(RANGE_KEY, String(sessions)); } catch { /* no storage */ }
+}));
 
 function chosenPanes() {
   return [...document.querySelectorAll('#pane-toggles input')].filter(i => i.checked).map(i => i.dataset.pane);
@@ -224,7 +244,8 @@ async function loadStock(code, { scroll = false } = {}) {
     chart = new PaneChart($('bm-chart'), $('bm-tip'));
     applyPanes();
   }
-  chart.setData(series);
+  shownSeries = series;
+  drawRange();
 }
 
 function pick(code, opts) {
