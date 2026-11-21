@@ -11,12 +11,12 @@
   --paper-deep: #efe8da;
   --ink: #1a1714;
   --ink-soft: #4a443c;
-  --ink-faint: #8a8275;
+  --ink-faint: #6f685c; /* 4.5:1 on --paper-deep (WCAG AA) — small mono labels use it */
   --rule: #ddd4c3;
   --rule-soft: #ebe4d6;
   --up: #2f6b4f;
   --down: #b0392c;
-  --gold: #a67a26;
+  --gold: #86621f; /* text gold, 4.5:1 on --paper-deep; charts keep the brighter #a67a26 as a line colour */
   --slate: #3f5170;
   --up-wash: rgba(47, 107, 79, .09);
   --down-wash: rgba(176, 57, 44, .08);
@@ -90,7 +90,7 @@ button, input, select { font: inherit; color: inherit; }
   height: 2px; background: var(--ink);
 }
 .freshness {
-  display: inline-flex; align-items: center; gap: 8px;
+  display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0;
   font: 500 .74rem/1 var(--mono);
   color: var(--ink-soft);
   white-space: nowrap;
@@ -152,6 +152,8 @@ button, input, select { font: inherit; color: inherit; }
 .tile:nth-child(n+4) { border-bottom: 0; }
 .tile-label { grid-column: 1 / -1; font: 500 .72rem/1.2 var(--mono); color: var(--ink-soft); letter-spacing: .06em; text-transform: uppercase; }
 .tile-value { margin-top: 8px; font: 600 1.85rem/1 var(--mono); font-feature-settings: 'tnum' 1; letter-spacing: -.02em; }
+/* A word, not a figure (a sector name): smaller, and allowed to wrap. */
+.tile-value.word { font: 600 1.4rem/1.1 var(--display); letter-spacing: -.01em; }
 .tile-spark { grid-row: 2; grid-column: 2; align-self: end; width: 84px; height: 30px; }
 .tile-note { grid-column: 1 / -1; margin-top: 6px; font-size: .9rem; color: var(--ink-faint); }
 
@@ -359,6 +361,20 @@ button, input, select { font: inherit; color: inherit; }
   .movers-pick { margin-left: 0; }
   .figure-legend { margin-left: 0; }
   .tile-spark { width: 64px; }
+  .data-table .not-phone { display: none; }
+  /* Fingers, not cursors: every control at least 44px tall (WCAG 2.5.5). */
+  .segmented, .tabs { flex-wrap: wrap; overflow-x: visible; }
+  .segmented button, .tabs button { min-height: 44px; padding-left: 14px; padding-right: 14px; }
+  .movers-btn, .movers-input, .btn, .toolbar .search { height: 44px; }
+  .movers-btn { width: 44px; }
+  .link-btn { min-height: 44px; margin-top: 0; }
+  .legend-chip { min-height: 44px; padding: 0 14px; }
+  .how summary { min-height: 44px; display: flex; align-items: center; }
+  /* The section nav scrolls sideways; fade whichever edge has more behind it
+     (nav.js sets the classes and centres the current section on load). */
+  .site-nav.more-right { -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent); mask-image: linear-gradient(90deg, #000 85%, transparent); }
+  .site-nav.more-left { -webkit-mask-image: linear-gradient(90deg, transparent, #000 15%); mask-image: linear-gradient(90deg, transparent, #000 15%); }
+  .site-nav.more-left.more-right { -webkit-mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent); mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent); }
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 
@@ -432,6 +448,8 @@ button, input, select { font: inherit; color: inherit; }
 .hm-code { font: 700 10px var(--mono); fill: #fff; text-anchor: middle; pointer-events: none; }
 .hm-code.big { font-size: 14px; }
 .hm-pct { font: 500 10px var(--mono); fill: rgba(255,255,255,.88); text-anchor: middle; pointer-events: none; }
+.hm-code.on-light { fill: var(--ink); }
+.hm-pct.on-light { fill: var(--ink-soft); }
 
 .rotation { display: block; width: 100%; touch-action: pan-y; }
 .rot-q { stroke: none; }

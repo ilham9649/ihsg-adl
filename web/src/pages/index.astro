@@ -3,9 +3,11 @@ import Base from '../layouts/Base.astro';
 import Figure from '../components/Figure.astro';
 
 const TILES = [
-  { id: 'advances', label: 'Advancing', note: 'Closed above the session before', spark: true },
-  { id: 'declines', label: 'Declining', note: 'Closed below the session before', spark: true },
-  { id: 'ratio', label: 'A / D ratio', note: 'Risers per faller · 1.00 is even', spark: true },
+  // The session's index move only — stock counts (advancing, declining, A/D)
+  // are the Breadth page's, and live there.
+  { id: 'weightup', label: 'Index weight rising', note: '—' },
+  { id: 'topsector', label: 'Best sector', note: '—', word: true },
+  { id: 'bottomsector', label: 'Worst sector', note: '—', word: true },
   { id: 'lifter', label: 'Biggest lifter', note: '—' },
   { id: 'dragger', label: 'Biggest dragger', note: '—' },
   { id: 'estimate', label: 'Our estimate', note: '—' },
@@ -36,7 +38,7 @@ const TILES = [
         {TILES.map(t => (
           <div class="tile">
             <div class="tile-label">{t.label}</div>
-            <div class="tile-value" id={t.id}>—</div>
+            <div class={t.word ? 'tile-value word' : 'tile-value'} id={t.id}>—</div>
             {t.spark && <svg class="tile-spark" id={`${t.id}-spark`} aria-hidden="true"></svg>}
             <div class="tile-note" id={t.spark ? undefined : `${t.id}-note`}>{t.note}</div>
           </div>

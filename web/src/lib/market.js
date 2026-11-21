@@ -5,7 +5,7 @@
 // any candle. The breadth indicators live on their own page (breadth.js).
 // ──────────────────────────────────────────────
 import { BreadthChart } from './breadth-chart.js';
-import { API_BASE, getJson, setFreshness, setFreshnessError, debounce, sparkline } from './shared.js';
+import { API_BASE, getJson, setFreshness, setFreshnessError, debounce } from './shared.js';
 import { renderHeatmap } from './heatmap.js';
 import { computeRotation, renderRotation } from './rotation.js';
 import { HoverSync, linkBreadth } from './sync.js';
@@ -92,19 +92,31 @@ function renderHero() {
   document.getElementById('hero-range').textContent = row.ihsgLow != null ? `${fmtIdx(row.ihsgLow)} – ${fmtIdx(row.ihsgHigh)}` : '—';
   document.getElementById('hero-pctadv').textContent = row.pctAdvancing != null ? row.pctAdvancing.toFixed(1) + '%' : '—';
 
-  const recent = allData.slice(Math.max(0, at - 29), at + 1);
-  const tile = (id, text, tone, spark, ref = null) => {
-    const el = document.getElementById(id);
-    el.textContent = text;
-    el.className = 'tile-value ' + (tone || '');
-    if (spark) sparkline(document.getElementById(id + '-spark'), recent.map(spark), { ref });
-  };
-  tile('advances', String(row.advances), 'up', d => d.advances);
-  tile('declines', String(row.declines), 'down', d => d.declines);
-  tile('ratio', row.ratio.toFixed(2), row.ratio >= 1 ? 'up' : 'down', d => d.ratio, 1);
-
-  // From the movers: who did the most, and how close the estimate came.
+  // From the movers: which sectors and stocks did the most, and how close the estimate came.
   const day = moversByDate.get(session);
+  // Ranked by the sector's own move, not its points: by points the heaviest
+  // sector (Financial Services) would top or tail nearly every session. A
+  // sector under 1% of the index is too thin to name; "Other" is a pool.
+  const base = day ? day.close - day.change : 0;
+  const sectors = base > 0 ? Object.entries(day?.sectors || {})
+    .filter(([name, [bp]]) => name !== 'Other' && bp >= MIN_SECTOR_BP)
+    .map(([name, [bp, pts]]) => ({ name, bp, pts, pct: pts / (base * bp / 1e4) * 100 }))
+    .sort((a, b) => b.pct - a.pct) : [];
+  const sectorTile = (id, sec) => {
+    const el = document.getElementById(id);
+    el.textContent = sec ? (SHORT_SECTOR[sec.name] || sec.name) : '—';
+    el.title = sec ? sec.name : '';
+    setTone(el, sec && (sec.pct >= 0 ? 'up' : 'down'));
+    // Two decimals for a quiet sector, so it doesn't read "−0.0".
+    const fine = (v, unit) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(Math.abs(v) < 0.1 ? 2 : 1) + unit;
+    document.getElementById(id + '-note').textContent = sec
+      ? `${fine(sec.pct, '%')} · ${fine(sec.pts, ' pts')} · ${(sec.bp / 100).toFixed(1)}% of the index`
+      : 'Not on record';
+  };
+  sectorTile('topsector', sectors[0]);
+  sectorTile('bottomsector', sectors.length > 1 ? sectors[sectors.length - 1] : null);
+  renderWeightTile();
+
   const mover = (id, m) => {
     document.getElementById(id).textContent = m ? m.ticker : '—';
     document.getElementById(id + '-note').textContent = m ? `${fmtPts(m.pts)} pts · ${fmtPct(m.pct)}` : 'Not on record';
@@ -113,6 +125,33 @@ function renderHero() {
   mover('dragger', day?.down?.[0]);
   document.getElementById('estimate').textContent = day ? fmtPts(day.estimate) : '—';
   document.getElementById('estimate-note').textContent = day ? `Our weights, against the real ${fmtPts(day.change)}` : 'Not on record';
+}
+
+const MIN_SECTOR_BP = 100;
+// Names that would wrap in a tile; the full name stays in its tooltip.
+const SHORT_SECTOR = { 'Communication Services': 'Communication', 'Consumer Defensive': 'Cons. Defensive', 'Consumer Cyclical': 'Cons. Cyclical' };
+const setTone = (el, tone) => { el.classList.remove('up', 'down'); if (tone) el.classList.add(tone); };
+
+// The cap-weighted counterpart of % Advancing: how much of the index, by
+// weight, closed higher. Far from % Advancing, a few heavyweights moved it.
+// Needs every index stock's weight, so it fills in once /api/session arrives.
+function renderWeightTile() {
+  const el = document.getElementById('weightup');
+  const note = document.getElementById('weightup-note');
+  const data = sessionCache.get(session);
+  const stocks = (data?.stocks || []).filter(s => s[3] > 0);
+  if (!stocks.length) {
+    el.textContent = '—';
+    setTone(el, null);
+    note.textContent = data === undefined ? 'Loading the session…' : 'Not on record';
+    return;
+  }
+  const total = stocks.reduce((a, s) => a + s[3], 0);
+  const upW = stocks.filter(s => s[2] > 0).reduce((a, s) => a + s[3], 0);
+  const share = upW / total * 100;
+  el.textContent = share.toFixed(0) + '%';
+  setTone(el, share >= 50 ? 'up' : 'down');
+  note.textContent = `${stocks.filter(s => s[2] > 0).length} of ${stocks.length} index stocks rose`;
 }
 
 // ── Who moved it (Fig. I) ──
@@ -239,6 +278,7 @@ async function loadSession(date) {
   }
   if (request !== sessionRequest) return; // a newer pick won
   sessionData = data;
+  renderWeightTile();
   renderHeatmapFig();
   if (moversView !== 'points' && moversMode === 'day') renderTopView();
 }

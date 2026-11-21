@@ -206,31 +206,33 @@ const num = (v, dp = 1) => v == null ? '—' : v.toFixed(dp);
 const signed = (v, dp = 0) => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(dp);
 const above = (ref) => (v) => v == null ? null : (v >= ref ? 'td-positive' : 'td-negative');
 
-// Columns in groups, so sixteen of them read as four questions.
+// Columns in groups, so sixteen of them read as four questions. Green/red
+// only where it means more rose than fell (spread, % Adv, McClellan): colouring
+// every column at its midpoint turned the table into a red-green wall.
 const TABLE_GROUPS = [
   { head: '', cols: [
     { key: 'date', head: 'Date', desc: 'Trading session', get: d => d.date, num: false },
     { key: 'ihsg', head: 'IHSG', desc: 'Index close', get: d => d.ihsg == null ? '—' : Math.round(d.ihsg).toLocaleString('en-US') },
   ] },
   { head: 'The count', cols: [
-    { key: 'advances', head: 'Adv', desc: 'Companies that closed higher', get: d => d.advances, cls: () => 'td-positive' },
-    { key: 'declines', head: 'Dec', desc: 'Companies that closed lower', get: d => d.declines, cls: () => 'td-negative' },
+    { key: 'advances', head: 'Adv', desc: 'Companies that closed higher', get: d => d.advances },
+    { key: 'declines', head: 'Dec', desc: 'Companies that closed lower', get: d => d.declines },
     { key: 'unchanged', head: 'Unch', desc: 'Closed flat, or did not trade', get: d => d.unchanged },
     { key: 'spread', head: 'Spread', desc: 'Advances minus declines', get: d => signed(d.spread), cls: d => above(0)(d.spread) },
-    { key: 'ratio', head: 'Ratio', desc: 'Advances per decline; 1.00 is even', get: d => num(d.ratio, 2), cls: d => above(1)(d.ratio) },
+    { key: 'ratio', head: 'Ratio', desc: 'Advances per decline; 1.00 is even', get: d => num(d.ratio, 2) },
   ] },
   { head: 'Breadth', cols: [
     { key: 'pctAdvancing', head: '% Adv', desc: 'Share of trading companies that rose; 50% is neutral', get: d => d.pctAdvancing == null ? '—' : num(d.pctAdvancing) + '%', cls: d => above(50)(d.pctAdvancing) },
-    { key: 'pctAdvancingMA', head: '20d', desc: '20-day average of % Advancing', get: d => num(d.pctAdvancingMA), cls: d => above(50)(d.pctAdvancingMA) },
-    { key: 'pctAdvancingMA100', head: '100d', desc: '100-day average of % Advancing', get: d => num(d.pctAdvancingMA100), cls: d => above(50)(d.pctAdvancingMA100) },
-    { key: 'pctAdvancingMA200', head: '200d', desc: '200-day average of % Advancing', get: d => num(d.pctAdvancingMA200), cls: d => above(50)(d.pctAdvancingMA200) },
-    { key: 'zbt', head: 'ZBT', desc: 'Zweig Breadth Thrust: 10-day EMA of % Advancing', get: d => num(d.zbt), cls: d => above(50)(d.zbt) },
+    { key: 'pctAdvancingMA', head: '20d', desc: '20-day average of % Advancing', get: d => num(d.pctAdvancingMA) },
+    { key: 'pctAdvancingMA100', head: '100d', desc: '100-day average of % Advancing', get: d => num(d.pctAdvancingMA100) },
+    { key: 'pctAdvancingMA200', head: '200d', desc: '200-day average of % Advancing', get: d => num(d.pctAdvancingMA200) },
+    { key: 'zbt', head: 'ZBT', desc: 'Zweig Breadth Thrust: 10-day EMA of % Advancing', get: d => num(d.zbt) },
     { key: 'mcClellan', head: 'McClellan', desc: '19 less 39-day EMA of the spread; 0 is neutral', get: d => signed(d.mcClellan, 1), cls: d => above(0)(d.mcClellan) },
   ] },
   { head: 'Momentum (weekly)', cols: [
-    { key: 'stochK', head: '%K', desc: 'Weekly stochastic (15,3,3)', get: d => num(d.stochK), cls: d => above(50)(d.stochK) },
-    { key: 'stochD', head: '%D', desc: 'Three-week average of %K', get: d => num(d.stochD), cls: d => above(50)(d.stochD) },
-    { key: 'shinSpread', head: 'W−S', desc: 'Shinohara Weak minus Strong; above 100 extremely oversold', get: d => num(d.shinSpread), cls: d => above(0)(d.shinSpread) },
+    { key: 'stochK', head: '%K', desc: 'Weekly stochastic (15,3,3)', get: d => num(d.stochK) },
+    { key: 'stochD', head: '%D', desc: 'Three-week average of %K', get: d => num(d.stochD) },
+    { key: 'shinSpread', head: 'W−S', desc: 'Shinohara Weak minus Strong; above 100 extremely oversold', get: d => num(d.shinSpread) },
   ] },
 ];
 const TABLE_COLS = TABLE_GROUPS.flatMap((g, gi) => g.cols.map((c, ci) => ({ ...c, groupStart: gi > 0 && ci === 0 })));

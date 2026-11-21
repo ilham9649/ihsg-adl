@@ -31,12 +31,15 @@ export function setFreshness(date, { staleAfter = 4, label = 'Data' } = {}) {
   const stale = age > staleAfter;
   el.dataset.state = stale ? 'stale' : 'fresh';
   // Two parts, so a phone can drop the date and keep what matters: the age.
+  // Stale, the pill says only how old ("Data 57d old") and keeps the date for
+  // its tooltip: the full "Data 25 Sept 2026 · 57d old" crowded the section
+  // nav off the header.
   const when = document.createElement('span');
   when.className = 'fresh-date';
-  when.textContent = `${label} ${longDate(date)}` + (stale ? ' · ' : '');
+  when.textContent = stale ? `${label} ` : `${label} ${longDate(date)}`;
   if (stale) el.replaceChildren(when, `${age}d old`);
   else el.replaceChildren(when);
-  el.title = stale ? `The latest reading is ${age} days old — it has stopped updating.` : 'Up to date';
+  el.title = stale ? `The latest reading is from ${longDate(date)}, ${age} days ago — it has stopped updating.` : 'Up to date';
 }
 
 export function setFreshnessError(message) {

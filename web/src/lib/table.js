@@ -10,7 +10,8 @@
 //   t.render(rows, { reset }) // back to the first page (a filter changed)
 //
 // Column: { key?, head, desc, get(row) → text, cls?(row) → class, num?: false,
-//           wide?: true, title?(row) → cell tooltip, sortValue?(row) }. A column with a key is sortable.
+//           wide?: true, phone?: false (hidden on a phone), title?(row) → cell tooltip, sortValue?(row) }.
+//           A column with a key is sortable.
 
 export function dataTable({ table, cols, sort = null, pageSize = 50, count = null, more = null, noun = ['row', 'rows'] }) {
   let rows = [];
@@ -29,6 +30,7 @@ export function dataTable({ table, cols, sort = null, pageSize = 50, count = nul
       th.scope = 'col';
       th.textContent = c.head;
       if (c.num !== false) th.classList.add('num');
+      if (c.phone === false) th.classList.add('not-phone');
       if (!c.key || !sort) { th.title = c.desc; th.style.cursor = 'help'; tr.appendChild(th); continue; }
       th.title = `${c.desc} — click to sort`;
       th.dataset.key = c.key;
@@ -70,6 +72,7 @@ export function dataTable({ table, cols, sort = null, pageSize = 50, count = nul
         if (cls) td.className = cls;
         if (c.num !== false) td.classList.add('num');
         if (c.wide) td.classList.add('td-wide');
+        if (c.phone === false) td.classList.add('not-phone');
         td.textContent = c.get(r);
         if (c.title) td.title = c.title(r);
         tr.appendChild(td);
