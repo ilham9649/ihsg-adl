@@ -55,11 +55,24 @@ export function squarify(items, x, y, w, h) {
 // Diverging colour: red below zero, green above, paper-grey at zero, full
 // strength at ±5% (most sessions' moves sit well inside that).
 const NEG = [176, 57, 44], POS = [47, 107, 79], MID = [222, 214, 199];
-export function moveColor(pct) {
+function moveRgb(pct) {
   const t = Math.max(-1, Math.min(1, (pct || 0) / 5));
   const [a, b] = t < 0 ? [MID, NEG] : [MID, POS];
   const k = Math.abs(t) ** 0.7; // lift small moves off the grey
-  return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * k)).join(',')})`;
+  return a.map((v, i) => Math.round(v + (b[i] - v) * k));
+}
+export function moveColor(pct) { return `rgb(${moveRgb(pct).join(',')})`; }
+
+// White labels vanish on the pale blocks near zero (~1.4:1 on the grey), so a
+// block's label is ink or white, whichever contrasts more with its fill.
+const luminance = rgb => {
+  const [r, g, b] = rgb.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const INK_L = luminance([26, 23, 20]);
+export function labelOnDark(pct) {
+  const l = luminance(moveRgb(pct));
+  return (1.05) / (l + 0.05) >= (l + 0.05) / (INK_L + 0.05);
 }
 
 /**
@@ -104,11 +117,12 @@ export function renderHeatmap(svg, stocks, { width = 1000, height = 520, onHover
       g.appendChild(rect);
       if (b.w > 34 && b.h > 18) {
         const big = b.w > 70 && b.h > 42;
-        const t = svgEl('text', { x: b.x + b.w / 2, y: b.y + b.h / 2 + (b.h > 32 ? -2 : 4), class: big ? 'hm-code big' : 'hm-code' });
+        const tone = labelOnDark(r.pct) ? '' : ' on-light';
+        const t = svgEl('text', { x: b.x + b.w / 2, y: b.y + b.h / 2 + (b.h > 32 ? -2 : 4), class: (big ? 'hm-code big' : 'hm-code') + tone });
         t.textContent = r.ticker;
         g.appendChild(t);
         if (b.h > 32) {
-          const p = svgEl('text', { x: b.x + b.w / 2, y: b.y + b.h / 2 + (big ? 16 : 11), class: 'hm-pct' });
+          const p = svgEl('text', { x: b.x + b.w / 2, y: b.y + b.h / 2 + (big ? 16 : 11), class: 'hm-pct' + tone });
           p.textContent = (r.pct >= 0 ? '+' : '−') + Math.abs(r.pct).toFixed(1) + '%';
           g.appendChild(p);
         }

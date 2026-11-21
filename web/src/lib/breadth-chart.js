@@ -66,7 +66,7 @@ export class BreadthChart {
 
     this.col = {
       grid: 'rgba(29,24,19,0.07)',
-      axis: '#948872',
+      axis: '#6f685c', // date labels: same AA-passing grey as --ink-faint
       text: '#5b5147',
       up: '#2f6b4f',
       down: '#b0392c',

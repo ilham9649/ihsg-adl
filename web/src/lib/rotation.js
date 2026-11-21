@@ -102,8 +102,9 @@ const svgEl = (name, attrs) => {
   return n;
 };
 // One distinct colour per sector, in alphabetical order of Yahoo's eleven
-// sector names, so a sector keeps its colour from session to session.
-const PALETTE = ['#2f6b4f', '#b0392c', '#3f5170', '#a67a26', '#7a4b8c', '#2a8fa0', '#8c5a2b', '#6b7a1f', '#c2457a', '#4a443c', '#d07a2a', '#1f5f8f'];
+// sector names, so a sector keeps its colour from session to session. No red
+// or green: on this site those mean down and up, and a sector is neither.
+const PALETTE = ['#8c5a2b', '#7a4b8c', '#c2457a', '#2a8fa0', '#4a443c', '#1f5f8f', '#9a7fb8', '#d07a2a', '#6d8fb3', '#3f5170', '#b08d57', '#8a8275'];
 const SECTORS = ['Basic Materials', 'Communication Services', 'Consumer Cyclical', 'Consumer Defensive', 'Energy',
   'Financial Services', 'Healthcare', 'Industrials', 'Real Estate', 'Technology', 'Utilities'];
 const colorOf = name => PALETTE[SECTORS.includes(name) ? SECTORS.indexOf(name) : PALETTE.length - 1];

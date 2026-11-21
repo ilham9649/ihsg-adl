@@ -267,15 +267,18 @@ function bindHover() {
 
 // ══════════════  THE TABLES  ══════════════
 const TABLE_COLS = [
-  { key: 'rank', head: '#', desc: 'Rank by discount to fair value', get: d => d.rank },
-  { key: 'ticker', head: 'Code', desc: 'IDX ticker', get: d => d.ticker, num: false },
-  { key: 'name', head: 'Company', desc: 'Registered name', get: d => shortName(d.name), title: d => d.name || '', num: false, wide: true },
-  { key: 'sector', head: 'Sector', desc: 'Business sector', get: d => d.sector || '—', num: false },
+  { key: 'rank', head: '#', desc: 'Rank by upside to fair value', get: d => d.rank },
+  // On a phone, Company and Sector give way so price, value and upside fit;
+  // the company name stays on the code's tooltip.
+  { key: 'ticker', head: 'Code', desc: 'IDX ticker', get: d => d.ticker, title: d => d.name || '', num: false },
+  { key: 'name', head: 'Company', desc: 'Registered name', get: d => shortName(d.name), title: d => d.name || '', num: false, wide: true, phone: false },
+  { key: 'sector', head: 'Sector', desc: 'Business sector', get: d => d.sector || '—', num: false, phone: false },
   { key: 'price', head: 'Price', desc: 'Latest close, rupiah', get: d => rupiah(d.price) },
   { key: 'fairValue', head: 'Value', desc: 'Estimated intrinsic value per share, rupiah', get: d => rupiah(d.fairValue) },
   // A negative fair value means the equity is worth nothing; printing the
   // ratio as "−1240%" would read as a precise measurement of no scale.
-  { key: 'upside', head: 'Discount', desc: 'How far the price sits below the estimate; negative means the price is above it', get: d => d.fairValue < 0 ? 'no value' : pct(d.upside), cls: d => tone(d.upside) },
+  // "Upside", not "discount": it is value ÷ price − 1, which runs past +100%.
+  { key: 'upside', head: 'Upside', desc: 'How far the estimate sits above the price; negative means the price is above it', get: d => d.fairValue < 0 ? 'no value' : pct(d.upside), cls: d => tone(d.upside) },
   { key: 'growth', head: 'Growth', desc: 'Assumed annual growth — revenue rate for cash flow, retained earnings for financials', get: d => pct(d.growth) },
   { key: 'roe', head: 'ROE', desc: 'Return on equity; financials only', get: d => d.roe == null ? '—' : pct(d.roe) },
   { key: 'model', head: 'Model', desc: 'Which valuation was used', get: d => d.model === 'dcf' ? 'DCF' : 'Excess return', num: false },
@@ -285,8 +288,8 @@ const TABLE_COLS = [
 // The gap is how much more the company keeps than it pays out.
 const ddmGap = d => d.ddmFairValue / d.fairValue - 1;
 const DDM_COLS = [
-  { key: 'ticker', head: 'Code', desc: 'IDX ticker', get: d => d.ticker, num: false },
-  { key: 'name', head: 'Company', desc: 'Registered name', get: d => shortName(d.name), title: d => d.name || '', num: false, wide: true },
+  { key: 'ticker', head: 'Code', desc: 'IDX ticker', get: d => d.ticker, title: d => d.name || '', num: false },
+  { key: 'name', head: 'Company', desc: 'Registered name', get: d => shortName(d.name), title: d => d.name || '', num: false, wide: true, phone: false },
   { key: 'price', head: 'Price', desc: 'Latest close, rupiah', get: d => rupiah(d.price) },
   { key: 'fairValue', head: 'Value', desc: "The company's primary fair value (DCF or excess return), rupiah", get: d => rupiah(d.fairValue) },
   { key: 'ddmFairValue', head: 'DDM', desc: 'Value implied by dividends actually paid, rupiah', get: d => rupiah(d.ddmFairValue) },
