@@ -280,6 +280,44 @@ export function aggregateMovers(days, from, to, perSide = RANGE_PER_SIDE) {
   };
 }
 
+/**
+ * Every stock over a run of sessions, for the session map and the attribution
+ * of a date range on the Market Map: points ADD, the price move COMPOUNDS (as
+ * in aggregateMovers), and the weight is the stock's going into the range —
+ * its weight on the first session it has in the span. Same telescoped real
+ * move. `stocks`: [ticker, pts, pct, weightBp], biggest weight first. Null
+ * when no session falls in the range.
+ */
+export function aggregateSession(days, from, to) {
+  const span = days.filter(d => d.date >= from && d.date <= to).sort((a, b) => a.date.localeCompare(b.date));
+  if (!span.length) return null;
+  const totals = new Map();
+  let estimate = 0;
+  for (const d of span) {
+    estimate += d.estimate;
+    for (const [ticker, [pts, pct, bp]] of Object.entries(d.m || {})) {
+      let t = totals.get(ticker);
+      if (!t) totals.set(ticker, t = { pts: 0, growth: 1, bp: bp ?? 0 });
+      t.pts += pts;
+      t.growth *= 1 + pct / 100;
+    }
+  }
+  const first = span[0], last = span[span.length - 1];
+  const base = first.close - first.change;
+  const change = last.close - base;
+  return {
+    from: first.date,
+    to: last.date,
+    sessions: span.length,
+    change: round2(change),
+    pct: round2((change / base) * 100),
+    estimate: round2(estimate),
+    stocks: [...totals.entries()]
+      .map(([ticker, t]) => [ticker, round2(t.pts), round2((t.growth - 1) * 100), t.bp])
+      .sort((a, b) => b[3] - a[3]),
+  };
+}
+
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const isIsoDate = d => {
   if (!ISO_DATE.test(d)) return false;

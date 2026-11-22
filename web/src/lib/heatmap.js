@@ -53,15 +53,16 @@ export function squarify(items, x, y, w, h) {
 }
 
 // Diverging colour: red below zero, green above, paper-grey at zero, full
-// strength at ±5% (most sessions' moves sit well inside that).
+// strength at ±full% — 5 for a session (most moves sit well inside that), wider
+// for a date range.
 const NEG = [176, 57, 44], POS = [47, 107, 79], MID = [222, 214, 199];
-function moveRgb(pct) {
-  const t = Math.max(-1, Math.min(1, (pct || 0) / 5));
+function moveRgb(pct, full = 5) {
+  const t = Math.max(-1, Math.min(1, (pct || 0) / full));
   const [a, b] = t < 0 ? [MID, NEG] : [MID, POS];
   const k = Math.abs(t) ** 0.7; // lift small moves off the grey
   return a.map((v, i) => Math.round(v + (b[i] - v) * k));
 }
-export function moveColor(pct) { return `rgb(${moveRgb(pct).join(',')})`; }
+export function moveColor(pct, full = 5) { return `rgb(${moveRgb(pct, full).join(',')})`; }
 
 // White labels vanish on the pale blocks near zero (~1.4:1 on the grey), so a
 // block's label is ink or white, whichever contrasts more with its fill.
@@ -70,17 +71,17 @@ const luminance = rgb => {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 };
 const INK_L = luminance([26, 23, 20]);
-export function labelOnDark(pct) {
-  const l = luminance(moveRgb(pct));
+export function labelOnDark(pct, full = 5) {
+  const l = luminance(moveRgb(pct, full));
   return (1.05) / (l + 0.05) >= (l + 0.05) / (INK_L + 0.05);
 }
 
 /**
  * Draw `stocks` ([ticker, pts, pct, weightBp, sector]) into `svg`, which is
- * W×H in its own units (it scales to its box). onHover(stock | null) reports
+ * W×H in its own units (it scales to its box); colour is full at ±`full`%. onHover(stock | null) reports
  * the block under the pointer.
  */
-export function renderHeatmap(svg, stocks, { width = 1000, height = 520, onHover = () => {} } = {}) {
+export function renderHeatmap(svg, stocks, { width = 1000, height = 520, full = 5, onHover = () => {} } = {}) {
   svg.replaceChildren();
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   const rows = stocks.filter(s => s[3] > 0).map(s => ({ ticker: s[0], pts: s[1], pct: s[2], value: s[3], sector: s[4] || 'Other' }));
@@ -112,12 +113,12 @@ export function renderHeatmap(svg, stocks, { width = 1000, height = 520, onHover
       const r = b.item;
       const rect = svgEl('rect', {
         x: b.x + .5, y: b.y + .5, width: Math.max(0, b.w - 1), height: Math.max(0, b.h - 1),
-        fill: moveColor(r.pct), class: 'hm-block',
+        fill: moveColor(r.pct, full), class: 'hm-block',
       });
       g.appendChild(rect);
       if (b.w > 34 && b.h > 18) {
         const big = b.w > 70 && b.h > 42;
-        const tone = labelOnDark(r.pct) ? '' : ' on-light';
+        const tone = labelOnDark(r.pct, full) ? '' : ' on-light';
         const t = svgEl('text', { x: b.x + b.w / 2, y: b.y + b.h / 2 + (b.h > 32 ? -2 : 4), class: (big ? 'hm-code big' : 'hm-code') + tone });
         t.textContent = r.ticker;
         g.appendChild(t);

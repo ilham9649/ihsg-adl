@@ -391,43 +391,104 @@ export async function putSectors(fresh) {
   return Object.keys(merged).length;
 }
 
-// ── Session top lists ──
-// Each session's top gainers, losers, value and volume across the WHOLE
-// listing (not just index weight), a month per item (`top#YYYY-MM`, ~40KB),
-// rewritten for the trailing year on every breadth refresh — same shape and
-// pruning as the movers months above.
-const TOP_MONTH_PREFIX = 'top#';
+// ── Session ledger ──
+// Every stock's close and running volume/value on every session of the
+// trailing year (scrapers/ledger.js), one item per session (`day#YYYY-MM-DD`,
+// ~45KB), plus one index item (`_ledger`) listing the sessions. Rewritten in
+// full on every breadth refresh. A range reads `_ledger` and two day items.
+//
+// The running totals start at the window's first bar, which slides a session
+// a day, so totals from two different refreshes don't subtract. Each day item
+// carries the `origin` it was summed from; a read that catches a refresh half
+// written sees two origins and says so rather than answer wrong.
+const LEDGER_KEY = '_ledger';
+const LEDGER_PREFIX = 'day#';
 
-export async function putTopMonths(byDate) {
-  const byMonth = new Map();
-  for (const [date, lists] of Object.entries(byDate)) {
-    const month = date.slice(0, 7);
-    if (!byMonth.has(month)) byMonth.set(month, {});
-    byMonth.get(month)[date] = lists;
-  }
-  const updatedAt = new Date().toISOString();
-  for (const [month, days] of byMonth) {
-    await client.send(new PutItemCommand({
-      TableName: TABLE_NAME,
-      Item: {
-        date: { S: `${TOP_MONTH_PREFIX}${month}` },
-        updatedAt: { S: updatedAt },
-        days: { S: JSON.stringify(days) },
-      },
-    }));
-  }
-  const first = [...byMonth.keys()].sort()[0];
-  if (first) {
-    const gone = monthBefore(first);
-    await deleteDates([`${TOP_MONTH_PREFIX}${gone}`, `${TOP_MONTH_PREFIX}${monthBefore(gone)}`]);
+async function batchWriteAll(requests) {
+  for (let i = 0; i < requests.length; i += 25) {
+    let pending = { [TABLE_NAME]: requests.slice(i, i + 25) };
+    for (let attempt = 0; pending[TABLE_NAME]?.length; attempt++) {
+      if (attempt > 5) throw new Error('BatchWriteItem kept returning unprocessed items');
+      if (attempt) await new Promise(r => setTimeout(r, 200 * 2 ** attempt));
+      const result = await client.send(new BatchWriteItemCommand({ RequestItems: pending }));
+      pending = result.UnprocessedItems || {};
+    }
   }
 }
 
-/** One session's top lists, or null. */
+async function getLedgerIndex() {
+  const result = await client.send(new GetItemCommand({
+    TableName: TABLE_NAME,
+    Key: { date: { S: LEDGER_KEY } },
+  }));
+  if (!result.Item?.dates?.S) return null;
+  return { origin: result.Item.origin.S, dates: JSON.parse(result.Item.dates.S) };
+}
+
+/** days: Map(date → { ticker: [close, cumVol, cumValue, ageDays] }), ascending. */
+export async function putLedger(days) {
+  const dates = [...days.keys()].sort();
+  if (!dates.length) return;
+  const origin = dates[0];
+  const previous = await getLedgerIndex();
+  const updatedAt = new Date().toISOString();
+  await batchWriteAll(dates.map(date => ({
+    PutRequest: {
+      Item: {
+        date: { S: `${LEDGER_PREFIX}${date}` },
+        origin: { S: origin },
+        updatedAt: { S: updatedAt },
+        stocks: { S: JSON.stringify(days.get(date)) },
+      },
+    },
+  })));
+  // The index goes last: until it lands, readers keep the old calendar.
+  await client.send(new PutItemCommand({
+    TableName: TABLE_NAME,
+    Item: {
+      date: { S: LEDGER_KEY },
+      origin: { S: origin },
+      updatedAt: { S: updatedAt },
+      dates: { S: JSON.stringify(dates) },
+    },
+  }));
+  // Sessions the window has slid past.
+  const keep = new Set(dates);
+  const gone = (previous?.dates || []).filter(d => !keep.has(d));
+  if (gone.length) await deleteDates(gone.map(d => `${LEDGER_PREFIX}${d}`));
+}
+
+/**
+ * The ledger's two ends for a range: { dates, base, end } where base/end are
+ * { date, stocks } — or { dates } alone when the caller's span picks nothing,
+ * null before the first refresh, and { stale: true } mid-refresh.
+ */
+export async function getLedger(pickSpan) {
+  const index = await getLedgerIndex();
+  if (!index) return null;
+  const span = pickSpan(index.dates);
+  if (!span) return { dates: index.dates };
+  const read = date => client.send(new GetItemCommand({
+    TableName: TABLE_NAME,
+    Key: { date: { S: `${LEDGER_PREFIX}${date}` } },
+  })).then(r => r.Item);
+  const [base, end] = await Promise.all([read(span.base), read(span.to)]);
+  if (!base || !end || base.origin?.S !== index.origin || end.origin?.S !== index.origin) return { stale: true };
+  return {
+    dates: index.dates,
+    span,
+    base: JSON.parse(base.stocks.S),
+    end: JSON.parse(end.stocks.S),
+  };
+}
+
+// Before the ledger: each session's top 20 a month per item (`top#YYYY-MM`).
+// No longer written; read only until the first refresh writes the ledger.
+// The leftover items can be deleted once it has.
 export async function getTopDay(date) {
   const result = await client.send(new GetItemCommand({
     TableName: TABLE_NAME,
-    Key: { date: { S: `${TOP_MONTH_PREFIX}${date.slice(0, 7)}` } },
+    Key: { date: { S: `top#${date.slice(0, 7)}` } },
   }));
   return result.Item?.days?.S ? (JSON.parse(result.Item.days.S)[date] || null) : null;
 }
