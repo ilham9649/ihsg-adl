@@ -8,10 +8,10 @@ import { buildValuations, fetchShareCounts } from './scrapers/valuation.js';
 import { fetchHeadlines, filterToday, wibDateString } from './scrapers/news.js';
 import { scoreSentiment } from './scrapers/sentiment.js';
 import { ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
-import { computeMovers, moversHistoryStart, BASELINE_FLOATS, aggregateMovers, parseRange, monthsSpanned, MOVERS_SESSIONS } from './scrapers/movers.js';
-import { createTopLists } from './scrapers/toplists.js';
+import { computeMovers, moversHistoryStart, BASELINE_FLOATS, aggregateMovers, aggregateSession, parseRange, monthsSpanned, MOVERS_SESSIONS } from './scrapers/movers.js';
+import { createLedger, ledgerSpan, rankLedger, ledgerMoves } from './scrapers/ledger.js';
 import { buildFloatSnapshot } from './scrapers/freefloat.js';
-import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, putMovers, getMovers, putMoversMonths, getMoversDays, putFloatSnapshot, getFloatSnapshots, getSectors, putSectors, putTopMonths, getTopDay, getBandarmology, getBandarmologyStock, acquireRefreshLock, releaseRefreshLock, acquireValuationLock, releaseValuationLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
+import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, putMovers, getMovers, putMoversMonths, getMoversDays, putFloatSnapshot, getFloatSnapshots, getSectors, putSectors, putLedger, getLedger, getTopDay, getBandarmology, getBandarmologyStock, acquireRefreshLock, releaseRefreshLock, acquireValuationLock, releaseValuationLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
 
 const BASE_HEADERS = {
   'Content-Type': 'application/json',
@@ -114,10 +114,11 @@ async function refreshData() {
     // share counts (one small extra Yahoo call per ticker, made in parallel
     // with its chart fetch). See scrapers/movers.js.
     const moverInputs = [];
-    // Each session's gainers/losers/value/volume across the whole listing, for
-    // the same trailing year as the movers, folded in as tickers arrive.
-    const topFrom = indexBars[Math.max(0, indexBars.length - MOVERS_SESSIONS)]?.date;
-    const tops = topFrom ? createTopLists(topFrom) : null;
+    // Every stock's close and running volume/value on each session of the same
+    // trailing year as the movers (plus the session before, as a baseline), for
+    // the top lists over a session or any range. See scrapers/ledger.js.
+    const ledgerSessions = indexBars.slice(-(MOVERS_SESSIONS + 1)).map(b => b.date);
+    const ledger = ledgerSessions.length > 1 ? createLedger(ledgerSessions) : null;
     let successCount = 0;
     let failCount = 0;
 
@@ -160,7 +161,7 @@ async function refreshData() {
 
         // Not gated on MIN_DATA_POINTS: a week-old listing is already in the index.
         const recent = quotes.filter(q => q.date >= moversFrom);
-        if (tops && recent.length > 1) tops.add(batch[j].replace(/\.JK$/, ''), recent);
+        if (ledger && recent.length) ledger.add(batch[j].replace(/\.JK$/, ''), recent);
         if (recent.length && shares.length) {
           moverInputs.push({
             ticker: batch[j].replace(/\.JK$/, ''),
@@ -235,19 +236,19 @@ async function refreshData() {
       console.error('Index movers failed:', err);
     }
 
-    // Same rule: the top lists ride along, and a failure here is logged only.
+    // Same rule: the ledger rides along, and a failure here is logged only.
     let topDays = 0;
     try {
-      if (tops) {
-        const byDate = tops.result();
-        topDays = Object.keys(byDate).length;
-        if (topDays) await putTopMonths(byDate);
+      if (ledger) {
+        const days = ledger.result();
+        topDays = days.size;
+        await putLedger(days);
       }
     } catch (err) {
-      console.error('Top lists failed:', err);
+      console.error('Session ledger failed:', err);
     }
 
-    console.log(`Refresh complete: ${successCount} OK, ${failCount} failed, ${series.length} days stored, ${ma200wRows.length} with a 200w MA, ${moverDays} days of movers from ${moverInputs.length} tickers, ${topDays} days of top lists`);
+    console.log(`Refresh complete: ${successCount} OK, ${failCount} failed, ${series.length} days stored, ${ma200wRows.length} with a 200w MA, ${moverDays} days of movers from ${moverInputs.length} tickers, ${topDays} sessions in the ledger`);
 
     return {
       success: true,
@@ -467,6 +468,40 @@ export const handler = async (event) => {
       return response(200, { success: true, ...result }, { cacheable: true });
     }
 
+    // A date range on the Market Map: every index stock's points (added up),
+    // move and weight going into the range, for the session map and the
+    // attribution, plus the top lists across the whole listing from the
+    // session ledger. A stock's move is its real close-to-close from the
+    // ledger where there is one: compounding the movers' sessions only covers
+    // the sessions a stock was IN the index (one that left for the HSC list
+    // mid-range would show a part of its move). Dates in the path, never a
+    // query string (see the movers range route).
+    const sessionRange = method === 'GET' && path.match(/^\/api\/session\/([^/]+)\/([^/]+)\/?$/);
+    if (sessionRange) {
+      const dates = parseRange(sessionRange[1], sessionRange[2]);
+      if (!dates) return response(400, { error: 'Dates must be YYYY-MM-DD' });
+      const months = monthsSpanned(dates.from, dates.to);
+      if (months.length > MAX_RANGE_MONTHS) return response(400, { error: `Ranges are limited to ${MAX_RANGE_MONTHS} months` });
+      const [days, led, sectors] = await Promise.all([
+        getMoversDays(months),
+        getLedger(list => ledgerSpan(list, dates.from, dates.to)),
+        getSectors(),
+      ]);
+      if (led?.stale) return response(200, { success: false, message: 'The range is being refreshed — try again in a minute.' });
+      const agg = aggregateSession(days, dates.from, dates.to);
+      const span = led?.span;
+      if (!agg && !span) return response(200, { success: false, message: 'No sessions on record in that range' }, { cacheable: true });
+      const moves = span ? ledgerMoves(led.base, led.end, { baseDate: span.base }) : {};
+      const stocks = (agg?.stocks || []).map(([t, pts, pct, bp]) => [t, pts, moves[t] ?? pct, bp, sectors[t] || null]);
+      return response(200, {
+        success: true,
+        from: agg?.from ?? span.from, to: agg?.to ?? span.to, sessions: agg?.sessions ?? span.sessions,
+        change: agg?.change ?? null, pct: agg?.pct ?? null, estimate: agg?.estimate ?? null,
+        stocks,  // [ticker, pts, pct, weightBp, sector]
+        top: span ? rankLedger(led.base, led.end, { baseDate: span.base }) : null, // rows [ticker, close, pct, value, volume]
+      }, { cacheable: true });
+    }
+
     // One session for the front page's heatmap and top lists: every stock's
     // points, move, index weight and sector, plus the session's gainers,
     // losers, value and volume. A date in the path, never a query string
@@ -476,7 +511,12 @@ export const handler = async (event) => {
       const dates = parseRange(session[1], session[1]);
       if (!dates) return response(400, { error: 'Date must be YYYY-MM-DD' });
       const date = dates.from;
-      const [days, top, sectors] = await Promise.all([getMoversDays([date.slice(0, 7)]), getTopDay(date), getSectors()]);
+      // The ledger's span for exactly this session: nothing if it wasn't one.
+      const daySpan = list => { const sp = ledgerSpan(list, date, date); return sp?.to === date ? sp : null; };
+      const [days, led, sectors] = await Promise.all([getMoversDays([date.slice(0, 7)]), getLedger(daySpan), getSectors()]);
+      if (led?.stale) return response(200, { success: false, message: 'The session is being refreshed — try again in a minute.' });
+      // Before the first refresh writes the ledger, the old per-month top lists.
+      const top = led?.span ? rankLedger(led.base, led.end, { baseDate: led.span.base }) : led ? null : await getTopDay(date);
       const day = days.find(d => d.date === date);
       if (!day && !top) return response(200, { success: false, message: 'No session on record for that date' }, { cacheable: true });
       const stocks = day

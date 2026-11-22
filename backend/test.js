@@ -12,9 +12,9 @@ import { dcfPerShare, residualIncomePerShare, isFinancial, median, trailingTwelv
 import { parseRssItems, mergeHeadlines, wibDateString, filterToday } from './scrapers/news.js';
 import { parseScoreResponse } from './scrapers/sentiment.js';
 import { weeklyCloses, ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
-import { valueOn, capWeights, computeMovers, moversHistoryStart, aggregateMovers, parseRange, monthsSpanned } from './scrapers/movers.js';
+import { valueOn, capWeights, computeMovers, moversHistoryStart, aggregateMovers, aggregateSession, parseRange, monthsSpanned } from './scrapers/movers.js';
 import { parseStat, buildFloatSnapshot, MIN_COVERAGE } from './scrapers/freefloat.js';
-import { createTopLists } from './scrapers/toplists.js';
+import { createLedger, ledgerSpan, rankLedger, ledgerMoves } from './scrapers/ledger.js';
 import { HSC_SCHEDULE, hscExcludedOn, FLOAT_OVERRIDES, floatOverrideOn } from './lib/ihsg-rules.js';
 import { percentile, windowLotsPerTrade, cutoff, pooledAverage, lpmDay, lpmSeries, constantFromDay } from './scrapers/lpm.js';
 import { LPM_CONSTANTS, LPM_ACTIONS } from './fixtures/lpm-constants.js';
@@ -1097,42 +1097,111 @@ describe('computeMovers — weights and sector totals (heatmap, rotation map)', 
   });
 });
 
-describe('createTopLists — the session gainers, losers, value and volume', () => {
-  const bars = (closes, volumes, start = 1) => closes.map((c, i) => ({
-    date: `2026-10-${String(start + i).padStart(2, '0')}`, close: c, volume: volumes[i] ?? 100,
-  }));
+describe('aggregateSession — every stock over a date range, for the map', () => {
+  const days = [
+    { date: '2026-10-01', close: 101, change: 1, estimate: 0.9, m: { A: [1, 10, 500], B: [-0.5, -2, 300] } },
+    { date: '2026-10-02', close: 103, change: 2, estimate: 2.1, m: { A: [2, 10, 520], C: [0.1, 1, 50] } },
+    { date: '2026-10-05', close: 99, change: -4, estimate: -3.8, m: { A: [-1, -5, 540] } },
+  ];
+  test('adds points, compounds the move, weighs by the first session, telescopes the real move', () => {
+    const r = aggregateSession(days, '2026-10-01', '2026-10-02');
+    strictEqual(`${r.from} ${r.to} ${r.sessions} ${r.change} ${r.estimate}`, '2026-10-01 2026-10-02 2 3 3');
+    const a = r.stocks.find(s => s[0] === 'A');
+    strictEqual(a.join(), 'A,3,21,500'); // 1.1 × 1.1
+    strictEqual(r.stocks[0][0], 'A');    // biggest weight first
+    strictEqual(r.stocks.find(s => s[0] === 'C')[3], 50); // first session it has
+  });
+  test('null when no session falls in the range', () => {
+    strictEqual(aggregateSession(days, '2026-10-03', '2026-10-04'), null);
+  });
+});
 
-  test('ranks each list, biggest first, and caps it at n', () => {
-    const t = createTopLists('2026-10-01', 2);
-    t.add('UP10', bars([100, 110], [0, 1000]));
-    t.add('UP20', bars([100, 120], [0, 10]));
-    t.add('UP5', bars([100, 105], [0, 5000]));
-    t.add('DN30', bars([100, 70], [0, 1]));
-    const day = t.result()['2026-10-02'];
-    strictEqual(day.gain.map(r => r[0]).join(), 'UP20,UP10');
-    strictEqual(day.lose.map(r => r[0]).join(), 'DN30');
-    strictEqual(day.volume.map(r => r[0]).join(), 'UP5,UP10');
-    strictEqual(day.value[0][0], 'UP5'); // 105 × 5000
-    strictEqual(day.gain[0][2], 20);     // pct
-    strictEqual(day.value[0][3], 525000);
+describe('session ledger — top lists over a session or a range', () => {
+  const d = n => `2026-10-${String(n).padStart(2, '0')}`;
+  const bars = (closes, volumes, start = 1) => closes.map((c, i) => ({ date: d(start + i), close: c, volume: volumes[i] ?? 100 }));
+  const sessions = [1, 2, 3, 4, 5].map(d);
+  const build = add => { const l = createLedger(sessions); add(l); return l.result(); };
+  const rank = (days, from, to, n) => {
+    const sp = ledgerSpan(sessions, from, to);
+    return rankLedger(days.get(sp.base), days.get(sp.to), { baseDate: sp.base, n });
+  };
+
+  test('one session ranks each list, biggest first, capped at n', () => {
+    const days = build(l => {
+      l.add('UP10', bars([100, 110], [0, 1000]));
+      l.add('UP20', bars([100, 120], [0, 10]));
+      l.add('UP5', bars([100, 105], [0, 5000]));
+      l.add('DN30', bars([100, 70], [0, 1]));
+    });
+    const top = rank(days, d(2), d(2), 2);
+    strictEqual(top.gain.map(r => r[0]).join(), 'UP20,UP10');
+    strictEqual(top.lose.map(r => r[0]).join(), 'DN30');
+    strictEqual(top.volume.map(r => r[0]).join(), 'UP5,UP10');
+    strictEqual(top.value[0][3], 525000); // 105 × 5000
+    strictEqual(top.gain[0][2], 20);
   });
 
-  test('a session with no volume did not trade, so it gains nothing', () => {
-    const t = createTopLists('2026-10-01');
-    t.add('HALT', bars([100, 150], [100, 0]));
-    strictEqual(t.result()['2026-10-02'], undefined);
+  test('a range compounds the price and sums volume and value', () => {
+    const days = build(l => l.add('A', bars([100, 110, 121, 133.1], [5, 1, 2, 3])));
+    const [row] = rank(days, d(2), d(4)).gain;
+    strictEqual(row[2], 33.1);              // 100 → 133.1
+    strictEqual(row[4], 6);                 // the base session's 5 is not in it
+    strictEqual(row[3], 110 + 242 + 399);   // close × volume, summed
   });
 
-  test('skips the move across a long gap — a reopening, not a gain', () => {
-    const t = createTopLists('2026-01-01');
-    t.add('SUSP', [{ date: '2026-01-02', close: 100, volume: 10 }, { date: '2026-03-02', close: 170, volume: 10 }]);
-    strictEqual(Object.keys(t.result()).length, 0);
+  test('a stock that steadily beats one-day leaders tops the range', () => {
+    const days = build(l => {
+      l.add('STEADY', bars([100, 104, 108.16, 112.49, 116.99], [1, 1, 1, 1, 1]));
+      l.add('SPIKE', bars([100, 115, 100, 100, 100], [1, 1, 1, 1, 1]));
+    });
+    strictEqual(rank(days, d(2), d(2), 1).gain[0][0], 'SPIKE');
+    strictEqual(rank(days, d(2), d(5), 1).gain[0][0], 'STEADY');
   });
 
-  test('only sessions from the start date on', () => {
-    const t = createTopLists('2026-10-03');
-    t.add('A', bars([100, 110, 121], [1, 1, 1]));
-    strictEqual(Object.keys(t.result()).join(), '2026-10-03');
+  test('a stock that did not trade in the range is in no list', () => {
+    const days = build(l => l.add('HALT', bars([100, 150, 150], [100, 0, 0])));
+    const top = rank(days, d(2), d(3));
+    strictEqual(top.gain.length + top.value.length, 0);
+  });
+
+  test('no price move from a stale start, but its trading still counts', () => {
+    const l = createLedger(['2026-03-01', '2026-03-02']);
+    l.add('SUSP', [{ date: '2026-01-02', close: 100, volume: 10 }, { date: '2026-03-02', close: 170, volume: 10 }]);
+    const days = l.result();
+    const top = rankLedger(days.get('2026-03-01'), days.get('2026-03-02'), { baseDate: '2026-03-01' });
+    strictEqual(top.gain.length, 0);
+    strictEqual(top.volume[0][2], null);
+    strictEqual(top.volume[0][4], 10);
+  });
+
+  test('a new listing has volume and value, no price move', () => {
+    const days = build(l => l.add('IPO', bars([500, 600], [1000, 800], 3)));
+    const top = rank(days, d(2), d(4));
+    strictEqual(top.gain.length, 0);
+    strictEqual(top.volume[0][4], 1800);
+  });
+
+  test('ledgerMoves: every live close-to-close move, even with no trading in between', () => {
+    const days = build(l => {
+      l.add('A', bars([100, 110, 121], [1, 0, 0]));
+      l.add('IPO', bars([500, 600], [1, 1], 3));
+    });
+    const moves = ledgerMoves(days.get(d(1)), days.get(d(3)), { baseDate: d(1) });
+    strictEqual(JSON.stringify(moves), '{"A":21}');
+  });
+
+  test('ledgerSpan snaps to sessions and keeps the first one as a baseline', () => {
+    const dates = [d(1), d(2), d(5), d(6)];
+    strictEqual(JSON.stringify(ledgerSpan(dates, d(3), d(4))), 'null'); // a weekend
+    const sp = ledgerSpan(dates, d(3), d(9));
+    strictEqual(`${sp.base} ${sp.from} ${sp.to} ${sp.sessions}`, `${d(2)} ${d(5)} ${d(6)} 2`);
+    const early = ledgerSpan(dates, '2026-09-01', d(2));
+    strictEqual(`${early.base} ${early.from} ${early.sessions}`, `${d(1)} ${d(2)} 1`);
+  });
+
+  test('a stock whose last bar is before the window is left out', () => {
+    const days = build(l => l.add('GONE', [{ date: '2026-09-20', close: 50, volume: 9 }]));
+    strictEqual(Object.keys(days.get(d(5))).length, 0);
   });
 });
 

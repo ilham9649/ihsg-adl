@@ -14,14 +14,15 @@ const TILES = [
 ];
 ---
 <Base title="Market Map" current="map"
-  description="One trading session of the Jakarta Composite Index (IHSG) at a time: which stocks moved it, a map of every index stock, the top lists and sector rotation.">
+  description="One trading session of the Jakarta Composite Index (IHSG), or any date range: which stocks moved it, a map of every index stock, the top lists and sector rotation.">
 
   <div class="wrap">
     <header class="page-head">
-      <div class="kicker">Market Map · one session at a time</div>
+      <div class="kicker">Market Map · one session or a date range</div>
       <h1>What moved the Jakarta market</h1>
-      <p class="dek">Pick any session of the last year — with the date control below, or by clicking a candle — and read
-        which stocks moved the IHSG, how every index stock fared, and where each sector stands against the whole.</p>
+      <p class="dek">Pick any session of the last year — with the date control below, or by clicking a candle — or a whole
+        date range, and read which stocks moved the IHSG, how every index stock fared, and where each sector stands
+        against the whole.</p>
     </header>
 
     <section class="hero" aria-label="The session on show">
@@ -30,8 +31,8 @@ const TILES = [
         <div class="hero-figure index" id="hero-close">—</div>
         <div class="hero-verdict" id="hero-move">Awaiting the session</div>
         <dl class="hero-meta">
-          <div><dt>Day's range</dt><dd id="hero-range">—</dd></div>
-          <div><dt>% Advancing</dt><dd><a href="/breadth.html" id="hero-pctadv">—</a></dd></div>
+          <div><dt id="hero-range-label">Day's range</dt><dd id="hero-range">—</dd></div>
+          <div><dt id="hero-pctadv-label">% Advancing</dt><dd><a href="/breadth.html" id="hero-pctadv">—</a></dd></div>
         </dl>
       </div>
       <div class="tiles">
@@ -40,7 +41,7 @@ const TILES = [
             <div class="tile-label">{t.label}</div>
             <div class={t.word ? 'tile-value word' : 'tile-value'} id={t.id}>—</div>
             {t.spark && <svg class="tile-spark" id={`${t.id}-spark`} aria-hidden="true"></svg>}
-            <div class="tile-note" id={t.spark ? undefined : `${t.id}-note`}>{t.note}</div>
+            <div class="tile-note" id={`${t.id}-note`}>{t.note}</div>
           </div>
         ))}
       </div>
@@ -49,14 +50,25 @@ const TILES = [
 
   <div class="toolbar">
     <div class="wrap">
-      <!-- The session on show: drives the headline, the tiles, Who moved it,
-           the session map and the rotation. Click any candle to pick one too. -->
-      <div class="session-nav" role="group" aria-label="Session on show">
+      <!-- One session or one date range drives the whole page: the headline,
+           the tiles, Who moved it, the session map and the rotation. Clicking
+           a candle picks that session. -->
+      <div class="tabs" role="group" aria-label="Read one session or a date range">
+        <button type="button" id="mode-day" aria-pressed="true">One day</button>
+        <button type="button" id="mode-range" aria-pressed="false">Date range</button>
+      </div>
+      <div class="session-nav" id="nav-day" role="group" aria-label="Session on show">
         <span class="toolbar-label" id="session-label">Session</span>
         <button type="button" class="movers-btn" id="session-prev" aria-label="Previous session">‹</button>
         <input type="date" class="movers-input" id="session-day" aria-labelledby="session-label">
         <button type="button" class="movers-btn" id="session-next" aria-label="Next session">›</button>
         <button type="button" class="link-btn" id="session-latest" hidden>Latest</button>
+      </div>
+      <div class="session-nav" id="nav-range" role="group" aria-label="Date range on show" hidden>
+        <input type="date" class="movers-input" id="range-from" aria-label="From date">
+        <span class="toolbar-label">to</span>
+        <input type="date" class="movers-input" id="range-to" aria-label="To date">
+        <span class="toolbar-label" id="range-note"></span>
       </div>
     </div>
   </div>
@@ -72,15 +84,6 @@ const TILES = [
             <button type="button" data-view="price" aria-pressed="false">Price %</button>
             <button type="button" data-view="activity" aria-pressed="false">Value &amp; volume</button>
           </div>
-          <div class="tabs" role="group" aria-label="Read one session or a date range">
-            <button type="button" id="movers-mode-day" aria-pressed="true">One day</button>
-            <button type="button" id="movers-mode-range" aria-pressed="false">Date range</button>
-          </div>
-          <span class="movers-pick" id="movers-pick-range" hidden>
-            <input type="date" class="movers-input" id="movers-from" aria-label="From date">
-            <span class="movers-to">to</span>
-            <input type="date" class="movers-input" id="movers-to" aria-label="To date">
-          </span>
         </div>
         <div class="movers-title">
           <span class="movers-date" id="movers-date">—</span>
@@ -105,7 +108,7 @@ const TILES = [
             <span id="movers-float-asof">—</span>), not IDX's own, so they can miss the real move by a few points — the
             gap is printed above. Stocks IDX flags for concentrated ownership no longer count toward the index from
             their effective date. A date range adds up each stock's points over its sessions, and shows its own price
-            move across them. Covers the last year of sessions. Hover any candle to read that session.</p>
+            move across them. For a date range, a stock's move is its own close to close, even across sessions it was out of the index. Covers the last year of sessions. In one-day mode, hover any candle to read that session.</p>
         </details>
       </div>
       <Fragment slot="how">
@@ -117,9 +120,9 @@ const TILES = [
     <Figure no="Fig. II" title="The session map"
       dek="Every index stock, sized by its weight in the IHSG and coloured by its own move, grouped by sector. Hover or tap a block.">
       <Fragment slot="legend">
-        <span class="legend-key"><span class="sw" style="background:#b0392c"></span>−5%</span>
+        <span class="legend-key"><span class="sw" style="background:#b0392c"></span><span id="hm-neg">−5%</span></span>
         <span class="legend-key"><span class="sw" style="background:#ded6c7"></span>0</span>
-        <span class="legend-key"><span class="sw" style="background:#2f6b4f"></span>+5%</span>
+        <span class="legend-key"><span class="sw" style="background:#2f6b4f"></span><span id="hm-pos">+5%</span></span>
       </Fragment>
       <div class="readout-line">
         <span class="kicker" id="hm-label">—</span>
@@ -130,7 +133,7 @@ const TILES = [
       <Fragment slot="how">
         <p>A block's area is the stock's free-float weight in our rebuild of the IHSG going into the session — the same
           weights as Who moved it — so the big blocks are the ones that can move the index. Colour runs from red at −5% to
-          green at +5% and beyond. Sectors are Yahoo Finance's; a stock it doesn't classify sits under Other.</p>
+          green at +5% and beyond (±15% for a date range, whose moves run wider). Sectors are Yahoo Finance's; a stock it doesn't classify sits under Other.</p>
       </Fragment>
     </Figure>
 

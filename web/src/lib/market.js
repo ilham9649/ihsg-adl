@@ -1,8 +1,9 @@
 // ──────────────────────────────────────────────
-// Market Map — one trading session at a time: what the IHSG did, which
-// stocks moved it, the session map, the top lists and sector rotation.
-// The session on show is picked with the ‹ date › navigator or a click on
-// any candle. The breadth indicators live on their own page (breadth.js).
+// Market Map — one trading session, or one date range, at a time: what the
+// IHSG did, which stocks moved it, the session map, the top lists and sector
+// rotation. The toolbar holds the one control for the whole page: One day (the
+// ‹ date › navigator, or a click on any candle) or Date range (From / To).
+// The breadth indicators live on their own page (breadth.js).
 // ──────────────────────────────────────────────
 import { BreadthChart } from './breadth-chart.js';
 import { API_BASE, getJson, setFreshness, setFreshnessError, debounce } from './shared.js';
@@ -20,6 +21,10 @@ const ZONE_FAINT = 'rgba(26,23,20,0.055)';
 
 let allData = [];
 let session = null; // the session on show — the latest unless the reader picks another
+let mode = 'day';   // 'day' | 'range' — the toolbar's toggle, for the whole page
+let range = null;   // { from, to, sessions } snapped to trading sessions, in range mode
+// The date the charts mark and the rotation runs to: the session, or the range's end.
+const anchor = () => (mode === 'range' && range ? range.to : session);
 const panels = {};
 // The candles cover the movers' trailing year: every session in them can be read.
 const MAP_SESSIONS = 252;
@@ -29,11 +34,11 @@ document.getElementById('session-prev').addEventListener('click', () => stepSess
 document.getElementById('session-next').addEventListener('click', () => stepSession(1));
 document.getElementById('session-day').addEventListener('change', e => pickSession(e.target.value));
 document.getElementById('session-latest').addEventListener('click', () => setSession(allData[allData.length - 1].date));
+document.getElementById('mode-day').addEventListener('click', () => setMode('day'));
+document.getElementById('mode-range').addEventListener('click', () => setMode('range'));
+for (const id of ['range-from', 'range-to']) document.getElementById(id).addEventListener('change', pickRange);
 document.querySelectorAll('[data-view]').forEach(btn => btn.addEventListener('click', () => setMoversView(btn.dataset.view)));
-document.getElementById('movers-mode-day').addEventListener('click', () => setMoversMode('day'));
-document.getElementById('movers-mode-range').addEventListener('click', () => setMoversMode('range'));
 document.getElementById('movers-more').addEventListener('click', toggleMoversLimit);
-for (const id of ['movers-from', 'movers-to']) document.getElementById(id).addEventListener('change', loadRange);
 
 // ── Fetch ──
 async function fetchData() {
@@ -43,9 +48,12 @@ async function fetchData() {
     allData = data.data;
     setFreshness(allData[allData.length - 1].date);
     session = allData[allData.length - 1].date;
-    const day = document.getElementById('session-day');
-    day.min = allData[Math.max(0, allData.length - MAP_SESSIONS)].date;
-    day.max = session;
+    // The pickers offer only the year the page can read.
+    for (const id of ['session-day', 'range-from', 'range-to']) {
+      const input = document.getElementById(id);
+      input.min = allData[Math.max(0, allData.length - MAP_SESSIONS)].date;
+      input.max = session;
+    }
     renderAll();
     syncSession();
   } catch (err) {
@@ -68,19 +76,33 @@ function renderPanels(data) {
   const canvas = document.getElementById('ihsg-chart');
   if (!panels.ihsg) panels.ihsg = new BreadthChart(canvas, document.getElementById('ihsg-tip'), { panel: 'price', legend: false });
   panels.ihsg.setData(data);
-  panels.ihsg.setPinned(data.findIndex(d => d.date === session));
+  panels.ihsg.setPinned(data.findIndex(d => d.date === anchor()));
   panels.ihsg.onPick = i => { if (data[i]) setSession(data[i].date); };
   linkBreadth(panels.ihsg);
 }
 
-// ── Headline and tiles: the session's own numbers ──
+// ── Headline and tiles: the session's own numbers, or the range's ──
 const fmtIdx = v => v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const setText = (id, text) => { document.getElementById(id).textContent = text; };
+// Who did the most, and how close the estimate came — a session's or a range's.
+function heroMovers(up, down, estimate, change, missing) {
+  const mover = (id, m) => {
+    setText(id, m ? m.ticker : '—');
+    setText(id + '-note', m ? `${fmtPts(m.pts)} pts · ${fmtPct(m.pct)}` : missing);
+  };
+  mover('lifter', up);
+  mover('dragger', down);
+  setText('estimate', estimate != null ? fmtPts(estimate) : '—');
+  setText('estimate-note', estimate != null ? `Our weights, against the real ${fmtPts(change)}` : missing);
+}
+
 function renderHero() {
   if (!allData.length || !session) return;
+  if (mode === 'range') { renderHeroRange(); return; }
   const at = allData.findIndex(d => d.date === session);
   const row = allData[at], prev = allData[at - 1];
   if (!row) return;
-  document.getElementById('hero-date').textContent = longDate(session);
+  setText('hero-date', longDate(session));
   const fig = document.getElementById('hero-close');
   fig.textContent = row.ihsg != null ? fmtIdx(row.ihsg) : '—';
   const verdict = document.getElementById('hero-move');
@@ -89,19 +111,76 @@ function renderHero() {
     verdict.textContent = `${fmtPts(ch)} pts (${fmtPct(ch / prev.ihsg * 100)})`;
     verdict.style.color = fig.style.color = ch >= 0 ? UP : DOWN;
   } else verdict.textContent = '';
-  document.getElementById('hero-range').textContent = row.ihsgLow != null ? `${fmtIdx(row.ihsgLow)} – ${fmtIdx(row.ihsgHigh)}` : '—';
-  document.getElementById('hero-pctadv').textContent = row.pctAdvancing != null ? row.pctAdvancing.toFixed(1) + '%' : '—';
+  setText('hero-range-label', "Day's range");
+  setText('hero-range', row.ihsgLow != null ? `${fmtIdx(row.ihsgLow)} – ${fmtIdx(row.ihsgHigh)}` : '—');
+  setText('hero-pctadv-label', '% Advancing');
+  setText('hero-pctadv', row.pctAdvancing != null ? row.pctAdvancing.toFixed(1) + '%' : '—');
 
-  // From the movers: which sectors and stocks did the most, and how close the estimate came.
   const day = moversByDate.get(session);
-  // Ranked by the sector's own move, not its points: by points the heaviest
-  // sector (Financial Services) would top or tail nearly every session. A
-  // sector under 1% of the index is too thin to name; "Other" is a pool.
-  const base = day ? day.close - day.change : 0;
-  const sectors = base > 0 ? Object.entries(day?.sectors || {})
-    .filter(([name, [bp]]) => name !== 'Other' && bp >= MIN_SECTOR_BP)
-    .map(([name, [bp, pts]]) => ({ name, bp, pts, pct: pts / (base * bp / 1e4) * 100 }))
-    .sort((a, b) => b.pct - a.pct) : [];
+  sectorTiles(day ? [day] : []);
+  renderWeightTile(sessionCache.get(session)?.stocks, !sessionCache.has(session));
+  heroMovers(day?.up?.[0], day?.down?.[0], day?.estimate, day?.change, 'Not on record');
+}
+
+// A range: the close it ended on and its move from the close before it, its
+// low and high, average % advancing, and the tiles over the whole range.
+function renderHeroRange() {
+  const rows = allData.filter(d => d.date >= range.from && d.date <= range.to);
+  if (!rows.length) return;
+  const last = rows[rows.length - 1];
+  const prev = allData[allData.indexOf(rows[0]) - 1];
+  setText('hero-date', longDate(range.to));
+  const fig = document.getElementById('hero-close');
+  fig.textContent = last.ihsg != null ? fmtIdx(last.ihsg) : '—';
+  const verdict = document.getElementById('hero-move');
+  const n = rows.length;
+  if (last.ihsg != null && prev?.ihsg) {
+    const ch = last.ihsg - prev.ihsg;
+    verdict.textContent = `${fmtPts(ch)} pts (${fmtPct(ch / prev.ihsg * 100)}) over ${n} session${n === 1 ? '' : 's'}`;
+    verdict.style.color = fig.style.color = ch >= 0 ? UP : DOWN;
+  } else verdict.textContent = '';
+  const lows = rows.map(d => d.ihsgLow).filter(v => v != null), highs = rows.map(d => d.ihsgHigh).filter(v => v != null);
+  setText('hero-range-label', 'Low – high');
+  setText('hero-range', lows.length ? `${fmtIdx(Math.min(...lows))} – ${fmtIdx(Math.max(...highs))}` : '—');
+  const pa = rows.map(d => d.pctAdvancing).filter(v => v != null);
+  setText('hero-pctadv-label', '% Advancing, avg');
+  setText('hero-pctadv', pa.length ? (pa.reduce((x, y) => x + y, 0) / pa.length).toFixed(1) + '%' : '—');
+
+  sectorTiles(movers.filter(d => d.date >= range.from && d.date <= range.to));
+  renderWeightTile(rangeData?.stocks, rangePending);
+  const ranked = rangeRanks();
+  heroMovers(ranked?.up[0], ranked?.down[0], rangeData?.estimate, rangeData?.change,
+    rangePending ? 'Adding up the range…' : 'Not on record');
+}
+
+const MIN_SECTOR_BP = 100;
+// Names that would wrap in a tile; the full name stays in its tooltip.
+const SHORT_SECTOR = { 'Communication Services': 'Communication', 'Consumer Defensive': 'Cons. Defensive', 'Consumer Cyclical': 'Cons. Cyclical' };
+const setTone = (el, tone) => { el.classList.remove('up', 'down'); if (tone) el.classList.add(tone); };
+
+// Best and worst sector over a run of sessions (one, for a day). Ranked by
+// the sector's own move, not its points: by points the heaviest sector
+// (Financial Services) would top or tail nearly every session. Each session's
+// move is pts / (prev close × weight), chained across a range like the
+// rotation's sector indices; the weight shown is the one going in. A sector
+// under 1% of the index is too thin to name; "Other" is a pool.
+function sectorTiles(days) {
+  const acc = new Map();
+  for (const d of days) {
+    const base = d.close - d.change;
+    if (!(base > 0)) continue;
+    for (const [name, [bp, pts]] of Object.entries(d.sectors || {})) {
+      if (name === 'Other' || !(bp > 0)) continue;
+      let sec = acc.get(name);
+      if (!sec) acc.set(name, sec = { name, bp, pts: 0, growth: 1 });
+      sec.pts += pts;
+      sec.growth *= 1 + pts / (base * bp / 1e4);
+    }
+  }
+  const sectors = [...acc.values()]
+    .filter(sec => sec.bp >= MIN_SECTOR_BP)
+    .map(sec => ({ ...sec, pct: (sec.growth - 1) * 100 }))
+    .sort((x, y) => y.pct - x.pct);
   const sectorTile = (id, sec) => {
     const el = document.getElementById(id);
     el.textContent = sec ? (SHORT_SECTOR[sec.name] || sec.name) : '—';
@@ -115,35 +194,20 @@ function renderHero() {
   };
   sectorTile('topsector', sectors[0]);
   sectorTile('bottomsector', sectors.length > 1 ? sectors[sectors.length - 1] : null);
-  renderWeightTile();
-
-  const mover = (id, m) => {
-    document.getElementById(id).textContent = m ? m.ticker : '—';
-    document.getElementById(id + '-note').textContent = m ? `${fmtPts(m.pts)} pts · ${fmtPct(m.pct)}` : 'Not on record';
-  };
-  mover('lifter', day?.up?.[0]);
-  mover('dragger', day?.down?.[0]);
-  document.getElementById('estimate').textContent = day ? fmtPts(day.estimate) : '—';
-  document.getElementById('estimate-note').textContent = day ? `Our weights, against the real ${fmtPts(day.change)}` : 'Not on record';
 }
 
-const MIN_SECTOR_BP = 100;
-// Names that would wrap in a tile; the full name stays in its tooltip.
-const SHORT_SECTOR = { 'Communication Services': 'Communication', 'Consumer Defensive': 'Cons. Defensive', 'Consumer Cyclical': 'Cons. Cyclical' };
-const setTone = (el, tone) => { el.classList.remove('up', 'down'); if (tone) el.classList.add(tone); };
-
 // The cap-weighted counterpart of % Advancing: how much of the index, by
-// weight, closed higher. Far from % Advancing, a few heavyweights moved it.
-// Needs every index stock's weight, so it fills in once /api/session arrives.
-function renderWeightTile() {
+// weight, closed higher (over a range: weight going in, in stocks that ended
+// higher). Far from % Advancing, a few heavyweights moved it. Needs every
+// index stock's weight, so it fills in once /api/session arrives.
+function renderWeightTile(list, pending) {
   const el = document.getElementById('weightup');
   const note = document.getElementById('weightup-note');
-  const data = sessionCache.get(session);
-  const stocks = (data?.stocks || []).filter(s => s[3] > 0);
+  const stocks = (list || []).filter(s => s[3] > 0);
   if (!stocks.length) {
     el.textContent = '—';
     setTone(el, null);
-    note.textContent = data === undefined ? 'Loading the session…' : 'Not on record';
+    note.textContent = pending ? 'Loading…' : 'Not on record';
     return;
   }
   const total = stocks.reduce((a, s) => a + s[3], 0);
@@ -151,7 +215,7 @@ function renderWeightTile() {
   const share = upW / total * 100;
   el.textContent = share.toFixed(0) + '%';
   setTone(el, share >= 50 ? 'up' : 'down');
-  note.textContent = `${stocks.filter(s => s[2] > 0).length} of ${stocks.length} index stocks rose`;
+  note.textContent = `${stocks.filter(s => s[2] > 0).length} of ${stocks.length} index stocks ${mode === 'range' ? 'ended higher' : 'rose'}`;
 }
 
 // ── Who moved it (Fig. I) ──
@@ -163,8 +227,6 @@ function renderWeightTile() {
 let movers = [];             // oldest first — each session's top five
 let moversByDate = new Map();
 let moverDate = null;        // the session on show in day mode
-let moversMode = 'day';      // 'day' | 'range'
-let rangeRequest = 0;        // only the latest range request may render
 // Five a side by default; "Show 20" expands. The page's own data holds each
 // session's top five only (`_movers` would pass DynamoDB's 400KB item limit at
 // twenty), so an expanded day is read from the per-day endpoint, which has
@@ -194,14 +256,8 @@ async function fetchMovers() {
     moversByDate = new Map(movers.map(d => [d.date, d]));
     document.getElementById('movers-float-asof').textContent =
       payload.floatAsOf ? `as of ${payload.floatAsOf}` : 'date unknown';
-    // The pickers offer only what is on record.
-    for (const id of ['movers-from', 'movers-to']) {
-      const input = document.getElementById(id);
-      input.min = movers[0].date;
-      input.max = movers[movers.length - 1].date;
-    }
     document.getElementById('movers').hidden = false;
-    showMovers(session || movers[movers.length - 1].date);
+    if (mode === 'day') showMovers(session || movers[movers.length - 1].date);
     renderRotationFig();
     renderHero();
   } catch (err) {
@@ -209,33 +265,38 @@ async function fetchMovers() {
   }
 }
 
-// In day mode, follows the hover on any panel, and stays on the last session
-// hovered when the pointer leaves — moving down to read the list must not snap
-// it back. A range the reader typed in is never overridden by a stray hover.
+// In day mode, a hover on the candles previews that session's points; leaving
+// goes back to the session on show. A range is never overridden by a hover.
 function linkMovers(data) {
   // A hover previews that session's points; leaving goes back to the session on show.
   HoverSync.register({
-    show: (i) => { if (moversMode === 'day' && moversView === 'points' && data[i]) showMovers(data[i].date); },
-    hide: () => { if (moversMode === 'day' && moversView === 'points' && session) showMovers(session); },
+    show: (i) => { if (mode === 'day' && moversView === 'points' && data[i]) showMovers(data[i].date); },
+    hide: () => { if (mode === 'day' && moversView === 'points' && session) showMovers(session); },
   });
 }
 
 // ── The session on show ──
-// One date drives the headline, the tiles, Who moved it, the session map and
-// the rotation; the charts mark it. A weekend or holiday picked in the
-// calendar reads the session before it, and says so.
+// One date (or one range, below) drives the headline, the tiles, Who moved it,
+// the session map and the rotation; the charts mark it. A weekend or holiday
+// picked in the calendar reads the session before it, and says so.
 let shownData = [];       // the rows the charts are drawn from (the period)
 let sessionData = null;   // /api/session/{date} for the session on show
 const sessionCache = new Map();
 let sessionRequest = 0;
 
+// A click on a candle picks that session, so it also leaves range mode.
 function setSession(date, note = '') {
   if (!date) return;
   session = date;
+  if (mode === 'range') { setMode('day'); if (note) showMovers(session, { force: true, note }); return; }
   renderHero();
-  const i = shownData.findIndex(d => d.date === session);
-  for (const p of Object.values(panels)) p.setPinned(i);
+  pinCharts();
   syncSession(note);
+}
+
+function pinCharts() {
+  const i = shownData.findIndex(d => d.date === anchor());
+  for (const p of Object.values(panels)) p.setPinned(i);
 }
 
 function syncSession(note = '') {
@@ -244,7 +305,8 @@ function syncSession(note = '') {
   document.getElementById('session-prev').disabled = i <= 0;
   document.getElementById('session-next').disabled = i >= allData.length - 1;
   document.getElementById('session-latest').hidden = i === allData.length - 1;
-  if (moversMode === 'day' && moversView === 'points') showMovers(session, { force: true, note });
+  if (moversView === 'points') showMovers(session, { force: true, note });
+  else renderTopView();
   renderRotationFig();
   loadSession(session);
 }
@@ -276,12 +338,101 @@ async function loadSession(date) {
     }
     sessionCache.set(date, data);
   }
-  if (request !== sessionRequest) return; // a newer pick won
+  if (request !== sessionRequest || mode !== 'day') return; // a newer pick won
   sessionData = data;
-  renderWeightTile();
+  renderWeightTile(data?.stocks, false);
   renderHeatmapFig();
-  if (moversView !== 'points' && moversMode === 'day') renderTopView();
+  if (moversView !== 'points') renderTopView();
 }
+
+// ── The range on show ──
+// From / To in the toolbar, snapped to the trading sessions inside them. One
+// fetch, GET /api/session/{from}/{to}, carries everything the range needs:
+// every index stock's points, move and weight (the map, Who moved it) and the
+// top lists across the whole listing.
+let rangeData = null;        // the server's answer for the range on show
+let rangePending = false;
+let rangeMessage = '';       // why there is no answer, when there isn't
+const rangeCache = new Map();
+let rangeRequest = 0;
+
+function setMode(next) {
+  if (next === mode || !allData.length) return;
+  mode = next;
+  for (const m of ['day', 'range']) document.getElementById(`mode-${m}`).setAttribute('aria-pressed', String(m === mode));
+  document.getElementById('nav-day').hidden = mode !== 'day';
+  document.getElementById('nav-range').hidden = mode !== 'range';
+  if (mode === 'day') {
+    renderHero();
+    pinCharts();
+    syncSession();
+    return;
+  }
+  // First visit: the twenty sessions to the one on show, about a month.
+  const from = document.getElementById('range-from'), to = document.getElementById('range-to');
+  if (!from.value || !to.value) {
+    const at = allData.findIndex(d => d.date === session);
+    to.value = session;
+    from.value = allData[Math.max(0, at - 19)].date;
+  }
+  pickRange();
+}
+
+function pickRange() {
+  let a = document.getElementById('range-from').value, b = document.getElementById('range-to').value;
+  if (!a || !b) return;
+  if (a > b) [a, b] = [b, a];
+  const rows = allData.filter(d => d.date >= a && d.date <= b);
+  const note = document.getElementById('range-note');
+  if (!rows.length) { note.textContent = 'No trading in that range.'; return; }
+  range = { from: rows[0].date, to: rows[rows.length - 1].date, sessions: rows.length };
+  note.textContent = `${range.sessions} session${range.sessions === 1 ? '' : 's'}`;
+  renderHero();
+  pinCharts();
+  renderRotationFig();
+  loadRange();
+}
+
+async function loadRange() {
+  const { from, to } = range;
+  const key = `${from}/${to}`;
+  const request = ++rangeRequest;
+  rangeData = rangeCache.get(key) || null;
+  rangePending = !rangeData;
+  rangeMessage = '';
+  renderRangeViews();
+  if (rangeData) return;
+  let payload;
+  try {
+    payload = await getJson(`/api/session/${from}/${to}`);
+  } catch (err) {
+    console.error('Range fetch error:', err);
+    payload = { success: false, message: 'Could not load that range.' };
+  }
+  if (request !== rangeRequest) return; // a newer pick won
+  rangePending = false;
+  if (payload.success) rangeCache.set(key, rangeData = payload);
+  else rangeMessage = payload.message || payload.error || 'Nothing on record for that range.';
+  if (mode === 'range') renderRangeViews();
+}
+
+function renderRangeViews() {
+  renderHero();
+  renderHeatmapFig();
+  renderRangeMovers();
+}
+
+// The range's lifters and draggers, from every stock's added-up points.
+function rangeRanks() {
+  const stocks = rangeData?.stocks;
+  if (!stocks?.length) return null;
+  const entries = stocks.map(([ticker, pts, pct]) => ({ ticker, pts, pct }));
+  const up = entries.filter(e => e.pts > 0).sort((x, y) => y.pts - x.pts).slice(0, MOVERS_LONG);
+  const down = entries.filter(e => e.pts < 0).sort((x, y) => x.pts - y.pts).slice(0, MOVERS_LONG);
+  return { up, down, counted: entries.length };
+}
+
+const rangeTitle = () => `${spanTitle(range.from, range.to)} · ${range.sessions} session${range.sessions === 1 ? '' : 's'}`;
 
 // ── Fig. II: the session map ──
 const pctText = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1) + '%';
@@ -289,21 +440,32 @@ function renderHeatmapFig() {
   const svg = document.getElementById('heatmap');
   const label = document.getElementById('hm-label');
   const readout = document.getElementById('hm-readout');
-  const stocks = sessionData?.stocks || [];
+  const inRange = mode === 'range';
+  const source = inRange ? rangeData : sessionData;
+  const title = inRange ? spanTitle(range.from, range.to) : longDate(session);
+  // A range's moves run wider than a session's, so its colours saturate later.
+  const full = inRange ? 15 : 5;
+  setText('hm-neg', `−${full}%`);
+  setText('hm-pos', `+${full}%`);
+  const stocks = source?.stocks || [];
   const withWeight = stocks.filter(s => s[3] > 0);
   if (!withWeight.length) {
     svg.replaceChildren();
     svg.style.height = '0';
-    label.textContent = longDate(session);
-    readout.textContent = sessionData
-      ? 'No index weights on record for this session yet — the map fills in from the next refresh.'
-      : 'No session map for this date. It covers the last year of sessions.';
+    label.textContent = title;
+    readout.textContent = inRange
+      ? (rangePending ? 'Adding up the range…' : rangeData ? 'No index weights on record for this range.' : rangeMessage)
+      : sessionData
+        ? 'No index weights on record for this session yet — the map fills in from the next refresh.'
+        : 'No session map for this date. It covers the last year of sessions.';
     return;
   }
   svg.style.height = '';
   const rest = () => {
-    label.textContent = longDate(session);
-    readout.textContent = `${withWeight.length} index stocks. Hover or tap a block.`;
+    label.textContent = title;
+    readout.textContent = inRange
+      ? `${withWeight.length} index stocks, sized by weight going into the range. Hover or tap a block.`
+      : `${withWeight.length} index stocks. Hover or tap a block.`;
   };
   // Drawn in real pixels, so the labels keep their size on any screen; a
   // phone gets a taller box rather than a squashed one.
@@ -311,7 +473,7 @@ function renderHeatmapFig() {
   const height = width < 600 ? Math.round(width * 1.45) : Math.round(Math.min(580, width * 0.5));
   svg.style.height = height + 'px';
   renderHeatmap(svg, stocks, {
-    width, height,
+    width, height, full,
     onHover: it => {
       if (!it) return rest();
       label.textContent = it.ticker;
@@ -319,17 +481,18 @@ function renderHeatmapFig() {
     },
   });
   document.getElementById('hm-alt').textContent =
-    `Treemap of ${withWeight.length} index stocks for ${longDate(session)}, sized by index weight and coloured by price move, grouped by sector.`;
+    `Treemap of ${withWeight.length} index stocks for ${title}, sized by index weight and coloured by price move, grouped by sector.`;
   rest();
 }
 
 // ── Fig. III: sector rotation ──
 function renderRotationFig() {
-  if (!movers.length || !session) return;
+  const end = anchor();
+  if (!movers.length || !end) return;
   const svg = document.getElementById('rotation');
   const label = document.getElementById('rot-label');
   const readout = document.getElementById('rot-readout');
-  const series = computeRotation(movers.filter(d => d.date <= session));
+  const series = computeRotation(movers.filter(d => d.date <= end));
   const legendEl = document.getElementById('rot-legend');
   if (!series.length) {
     svg.replaceChildren();
@@ -340,7 +503,7 @@ function renderRotationFig() {
     return;
   }
   svg.style.display = '';
-  const rest = () => { label.textContent = `Week to ${longDate(session)}`; readout.textContent = 'Hover or tap a sector.'; };
+  const rest = () => { label.textContent = `Week to ${longDate(end)}`; readout.textContent = 'Hover or tap a sector.'; };
   const width = Math.round(svg.getBoundingClientRect().width || 1000);
   const height = Math.round(width < 600 ? width * 0.95 : width * 0.56);
   svg.style.height = height + 'px';
@@ -369,7 +532,8 @@ function renderRotationFig() {
 
 // ── Who moved it: price and activity views ──
 // Points rank who moved the INDEX; these rank the whole listing by its own
-// numbers, from the session's top lists (backend/scrapers/toplists.js).
+// numbers, from the session ledger (backend/scrapers/ledger.js) — for one
+// session, or summed over a date range (GET /api/session/{from}/{to}).
 let moversView = 'points'; // 'points' | 'price' | 'activity'
 const HEADS = {
   points: ['Lifted the index · points', 'Dragged it · points'],
@@ -382,15 +546,14 @@ const compact = v => {
 };
 
 function setMoversView(view) {
-  if (moversMode === 'range' && view !== 'points') return; // one session only
   moversView = view;
   document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
   document.getElementById('movers-head-up').textContent = HEADS[view][0];
   document.getElementById('movers-head-down').textContent = HEADS[view][1];
   document.querySelector('.movers-cols').classList.toggle('neutral', view === 'activity');
-  if (view !== 'points') renderTopView();
-  else if (moversMode === 'day') showMovers(session, { force: true });
-  else if (lastMovers) renderMovers(lastMovers);
+  if (mode === 'range') renderRangeMovers();
+  else if (view !== 'points') renderTopView();
+  else showMovers(session, { force: true });
 }
 
 // One row of a price/activity list: code, a bar against the list's largest,
@@ -407,48 +570,58 @@ function topItem(code, frac, main, side, title) {
   return li;
 }
 
+// The lists on show: one session's (from the session fetch).
 function renderTopView() {
-  const top = sessionData?.top;
   const day = moversByDate.get(session);
-  document.getElementById('movers-date').textContent = longDate(session);
+  renderTopLists({
+    title: longDate(session),
+    change: day?.change, pct: day?.pct,
+    top: sessionData?.top,
+    pending: !sessionCache.has(session),
+    missing: 'No price lists on record for this session — they cover the last year of sessions.',
+    foot: moversView === 'price'
+      ? 'Across the whole listing, not just index weight: a small stock at its daily limit tops this list while barely touching the IHSG.'
+      : "Value is close × volume, an approximation — IDX's own figure prices each trade.",
+  });
+}
+
+function renderTopLists({ title, change, pct, top, pending = false, missing, foot }) {
+  document.getElementById('movers-date').textContent = title;
   const move = document.getElementById('movers-move');
-  if (day) {
-    move.textContent = `IHSG ${fmtPts(day.change)} pts (${fmtPct(day.pct)})`;
-    move.className = 'movers-move ' + (day.change >= 0 ? 'up' : 'down');
+  if (change != null) {
+    move.textContent = `IHSG ${fmtPts(change)} pts (${fmtPct(pct)})`;
+    move.className = 'movers-move ' + (change >= 0 ? 'up' : 'down');
   } else move.textContent = '';
   const more = document.getElementById('movers-more');
   if (!top) {
     fillMovers('movers-up', [], 1, '—');
     fillMovers('movers-down', [], 1, '—');
     more.hidden = true;
-    document.getElementById('movers-foot').textContent = !sessionCache.has(session)
-      ? 'Loading the session…'
-      : 'No price lists on record for this session — they cover the last year of sessions.';
+    document.getElementById('movers-foot').textContent = pending ? 'Loading the lists…' : missing;
     return;
   }
   const n = moversLimit;
   const [left, right] = moversView === 'price' ? [top.gain, top.lose] : [top.value, top.volume];
-  // Row: [ticker, close, pct, value, volume]
+  // Row: [ticker, close, pct, value, volume]; pct is null without a live start.
+  const pctOr = v => (v == null ? '—' : pctText(v));
   const fill = (id, rows, metric, main, side) => {
     const list = rows.slice(0, n);
     const scale = Math.max(...list.map(r => Math.abs(metric(r))), 0) || 1;
     const el = document.getElementById(id);
-    if (!list.length) { fillMovers(id, [], 1, 'None this session.'); return; }
+    if (!list.length) { fillMovers(id, [], 1, 'None in this span.'); return; }
     el.replaceChildren(...list.map(r => topItem(r[0], Math.abs(metric(r)) / scale, main(r), side(r),
-      `${r[0]} closed at ${r[1].toLocaleString('en-US')}, ${pctText(r[2])}; ≈Rp ${compact(r[3])} traded, ${compact(r[4])} shares`)));
+      `${r[0]} closed at ${r[1].toLocaleString('en-US')}${r[2] == null ? '' : ', ' + pctText(r[2])}; ≈Rp ${compact(r[3])} traded, ${compact(r[4])} shares`)));
   };
   if (moversView === 'price') {
     fill('movers-up', left, r => r[2], r => pctText(r[2]), r => r[1].toLocaleString('en-US'));
     fill('movers-down', right, r => r[2], r => pctText(r[2]), r => r[1].toLocaleString('en-US'));
   } else {
-    fill('movers-up', left, r => r[3], r => compact(r[3]), r => pctText(r[2]));
-    fill('movers-down', right, r => r[4], r => compact(r[4]), r => pctText(r[2]));
+    fill('movers-up', left, r => r[3], r => compact(r[3]), r => pctOr(r[2]));
+    fill('movers-down', right, r => r[4], r => compact(r[4]), r => pctOr(r[2]));
   }
   more.hidden = Math.max(left.length, right.length) <= MOVERS_SHORT && moversLimit === MOVERS_SHORT;
   more.textContent = moversLimit === MOVERS_SHORT ? `Show ${MOVERS_LONG}` : `Show ${MOVERS_SHORT}`;
-  document.getElementById('movers-foot').textContent = moversView === 'price'
-    ? 'Across the whole listing, not just index weight: a small stock at its daily limit tops this list while barely touching the IHSG.'
-    : "Value is close × volume, an approximation — IDX's own figure prices each trade.";
+  document.getElementById('movers-foot').textContent = foot;
 }
 
 function moverItem(m, scale) {
@@ -555,66 +728,50 @@ async function loadFullDay(date, note) {
       return;
     }
   }
-  if (request !== dayRequest || moversMode !== 'day' || moverDate !== date || moversLimit !== MOVERS_LONG) return;
+  if (request !== dayRequest || mode !== 'day' || moverDate !== date || moversLimit !== MOVERS_LONG) return;
   renderMovers({ ...view, title: longDate(date), note });
 }
 
 function toggleMoversLimit() {
   moversLimit = moversLimit === MOVERS_SHORT ? MOVERS_LONG : MOVERS_SHORT;
-  if (moversView !== 'points') renderTopView();
-  else if (moversMode === 'day') showMovers(moverDate, { force: true });
-  else if (lastMovers) renderMovers(lastMovers);
+  if (mode === 'range') renderRangeMovers();
+  else if (moversView !== 'points') renderTopView();
+  else showMovers(moverDate, { force: true });
 }
 
-function setMoversMode(mode) {
-  if (!movers.length || mode === moversMode) return;
-  // Price and activity are one session's lists; a range ranks by points only.
-  if (mode === 'range' && moversView !== 'points') setMoversView('points');
-  moversMode = mode;
-  document.querySelectorAll('[data-view]').forEach(b => { if (b.dataset.view !== 'points') b.disabled = mode === 'range'; });
-  for (const m of ['day', 'range']) {
-    const tab = document.getElementById(`movers-mode-${m}`);
-    tab.classList.toggle('is-active', m === mode);
-    tab.setAttribute('aria-pressed', String(m === mode));
-    document.getElementById(`movers-pick-${m}`).hidden = m !== mode;
-  }
-  if (mode === 'day') {
-    showMovers(session || movers[movers.length - 1].date, { force: true });
-    return;
-  }
-  // First visit: the last twenty sessions, about a month.
-  const from = document.getElementById('movers-from');
-  const to = document.getElementById('movers-to');
-  if (!to.value) to.value = movers[movers.length - 1].date;
-  if (!from.value) from.value = movers[Math.max(0, movers.length - 20)].date;
-  loadRange();
-}
-
-// A range is summed on the server: it needs every stock's points on every
-// session, which is far more than the page holds (GET /api/movers/{from}/{to}).
-async function loadRange() {
-  const a = document.getElementById('movers-from').value;
-  const b = document.getElementById('movers-to').value;
-  if (!a || !b) return;
-  const [from, to] = a <= b ? [a, b] : [b, a];
-  const request = ++rangeRequest;
-  const title = spanTitle(from, to);
-  renderMoversEmpty(title, 'Adding up the range…');
-  try {
-    const res = await fetch(`${API_BASE}/api/movers/${from}/${to}`);
-    const json = await res.json();
-    const payload = json.body && json.statusCode ? JSON.parse(json.body) : json;
-    if (request !== rangeRequest || moversMode !== 'range') return; // a newer pick won
-    if (!payload.success) {
-      renderMoversEmpty(title, payload.message || payload.error || 'No sessions on record in that range.');
+// Who moved it over the range: points from every stock's added-up points,
+// price and activity from the range's top lists.
+function renderRangeMovers() {
+  if (!range) return;
+  const title = rangeTitle();
+  const real = rangeData?.change != null ? { change: rangeData.change, pct: rangeData.pct } : ihsgMove(range.from, range.to);
+  if (moversView === 'points') {
+    const ranked = rangeRanks();
+    if (!ranked) {
+      renderMoversEmpty(title, rangePending ? 'Adding up the range…' : rangeData ? 'No attribution on record for this range.' : rangeMessage);
       return;
     }
-    const n = payload.sessions;
-    renderMovers({ ...payload, title: `${spanTitle(payload.from, payload.to)} · ${n} session${n === 1 ? '' : 's'}` });
-  } catch (err) {
-    console.error('Movers range error:', err);
-    if (request === rangeRequest) renderMoversEmpty(title, 'Could not load that range.');
+    renderMovers({ title, ...real, estimate: rangeData.estimate, counted: ranked.counted, up: ranked.up, down: ranked.down });
+    return;
   }
+  const n = range.sessions;
+  renderTopLists({
+    title, ...real,
+    top: rangeData?.top,
+    pending: rangePending,
+    missing: rangeData ? 'No price lists on record for this range yet.' : rangeMessage,
+    foot: moversView === 'price'
+      ? `Across the whole listing: last close against the close before ${longDate(range.from)}. A stock that only began trading in the range, or came back from a long halt, has no move to rank.`
+      : `Summed over the ${n} session${n === 1 ? '' : 's'}. Value is close × volume, an approximation — IDX's own figure prices each trade.`,
+  });
+}
+
+// The IHSG's own move over the range, from the page's daily closes.
+function ihsgMove(from, to) {
+  const rows = allData.filter(d => d.date >= from && d.date <= to);
+  const base = allData[allData.indexOf(rows[0]) - 1]?.ihsg, end = rows[rows.length - 1]?.ihsg;
+  if (!rows.length || !(base > 0) || !(end > 0)) return {};
+  return { change: end - base, pct: (end / base - 1) * 100 };
 }
 
 
@@ -623,7 +780,7 @@ let lastWidth = window.innerWidth;
 window.addEventListener('resize', debounce(() => {
   if (window.innerWidth === lastWidth) return; // a phone's toolbar showing/hiding
   lastWidth = window.innerWidth;
-  if (session) { renderHeatmapFig(); renderRotationFig(); }
+  if (anchor()) { renderHeatmapFig(); renderRotationFig(); }
 }, 250));
 
 

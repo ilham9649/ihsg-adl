@@ -236,14 +236,12 @@ button, input, select { font: inherit; color: inherit; }
 .movers { margin-top: 28px; padding: 22px 24px; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); }
 .movers-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .movers-head h3 { margin: 0; font: 600 1.15rem/1.2 var(--display); }
-.movers-pick { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
 .movers-btn, .movers-input, .btn {
   height: 32px; padding: 0 10px; border: 1px solid var(--rule); border-radius: var(--radius);
   background: var(--paper); font: 500 .8rem/1 var(--mono); cursor: pointer;
 }
 .movers-btn { width: 32px; padding: 0; }
 .movers-btn:disabled { opacity: .35; cursor: default; }
-.movers-to { font: .8rem var(--mono); color: var(--ink-faint); }
 .movers-title { margin: 18px 0 14px; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
 .movers-date { font: 600 1.25rem/1.2 var(--display); }
 .movers-move { font: 600 .92rem/1 var(--mono); }
@@ -358,7 +356,6 @@ button, input, select { font: inherit; color: inherit; }
   .chart canvas, .chart.tall canvas { height: 280px; }
   .movers { padding: 16px; }
   .movers-cols { grid-template-columns: 1fr; gap: 20px; }
-  .movers-pick { margin-left: 0; }
   .figure-legend { margin-left: 0; }
   .tile-spark { width: 64px; }
   .data-table .not-phone { display: none; }
