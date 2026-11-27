@@ -116,3 +116,64 @@ export function buildStock({ code, days, summaries, actions = [], listed = false
   row.divergence = row.lpm20z != null && row.ret20 != null && row.lpm20z >= 1 && row.ret20 <= 0;
   return { row, series };
 }
+
+// ── Market foreign flow (the Market Map's Foreign view) ──
+// Stockbit's daily net foreign value (`net_foreign`, the number each stock's
+// Foreign Flow line runs on), kept per stock per session so the Market Map can
+// add it up over any session or range it shows. Covers the job's universe —
+// the most traded stocks plus every actively traded non-HSC one, where nearly
+// all foreign money trades — not the whole exchange; the page says how many.
+
+export const FOREIGN_TOP = 20;
+export const FOREIGN_LIVE_DAYS = 30; // a starting close older than this gives no price move (as the ledger)
+
+/**
+ * stocks: [{ code, days: [{ date, close, netForeign }] }] → storage, one entry per month:
+ * { 'YYYY-MM': { 'YYYY-MM-DD': { CODE: [net in Rp millions, close] } } }, every stock that traded.
+ */
+export function foreignMonths(stocks) {
+  const months = {};
+  for (const s of stocks) {
+    for (const d of s.days) {
+      const m = (months[d.date.slice(0, 7)] ||= {});
+      (m[d.date] ||= {})[s.code] = [Math.round((d.netForeign || 0) / 1e6), d.close];
+    }
+  }
+  return months;
+}
+
+/**
+ * days: { date: { CODE: [netM, close] } } — the months a range spans plus the one before.
+ * Sums the sessions from..to (inclusive). Returns null when none is on record, else
+ * { from, to, sessions, net, stocks, buy, sell }: net in rupiah; buy/sell the top N
+ * [code, net, pct], pct close-to-close from the last close before the range (null
+ * without one within FOREIGN_LIVE_DAYS, like the ledger's price moves).
+ */
+export function foreignSpan(days, from, to, topN = FOREIGN_TOP) {
+  const dates = Object.keys(days).sort();
+  const inside = dates.filter(d => d >= from && d <= to);
+  if (!inside.length) return null;
+  const first = inside[0], last = inside[inside.length - 1];
+  const start = new Map(), end = new Map(), net = new Map();
+  for (const date of dates) {
+    if (date > last) break;
+    for (const [code, [n, close]] of Object.entries(days[date])) {
+      if (date < first) start.set(code, [date, close]);
+      else { net.set(code, (net.get(code) || 0) + n); end.set(code, close); }
+    }
+  }
+  const rows = [];
+  let total = 0;
+  for (const [code, n] of net) {
+    total += n;
+    if (!n) continue;
+    const s = start.get(code), e = end.get(code);
+    const live = s && (Date.parse(first) - Date.parse(s[0])) / 864e5 <= FOREIGN_LIVE_DAYS;
+    rows.push([code, n * 1e6, live && s[1] > 0 && e > 0 ? +(e / s[1] - 1).toFixed(4) : null]);
+  }
+  return {
+    from: first, to: last, sessions: inside.length, net: total * 1e6, stocks: net.size,
+    buy: rows.filter(r => r[1] > 0).sort((a, b) => b[1] - a[1]).slice(0, topN),
+    sell: rows.filter(r => r[1] < 0).sort((a, b) => a[1] - b[1]).slice(0, topN),
+  };
+}

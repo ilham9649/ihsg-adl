@@ -18,7 +18,7 @@ import { createLedger, ledgerSpan, rankLedger, ledgerMoves } from './scrapers/le
 import { HSC_SCHEDULE, hscExcludedOn, FLOAT_OVERRIDES, floatOverrideOn } from './lib/ihsg-rules.js';
 import { percentile, windowLotsPerTrade, cutoff, pooledAverage, lpmDay, lpmSeries, constantFromDay } from './scrapers/lpm.js';
 import { LPM_CONSTANTS, LPM_ACTIONS } from './fixtures/lpm-constants.js';
-import { volumeRotation, intensity, lastZ, changeZ, buildStock } from './scrapers/bandarmology.js';
+import { volumeRotation, intensity, lastZ, changeZ, buildStock, foreignMonths, foreignSpan } from './scrapers/bandarmology.js';
 import { readFileSync } from 'node:fs';
 
 // Helper: assert the A/D Line cumulative invariant (adLine is a genuine running
@@ -1304,5 +1304,38 @@ describe('Bandarmology — per-stock readings', () => {
     strictEqual(row.code, 'TEST');
     strictEqual(row.date, days[29].date);
     strictEqual(row.lpm20z, null);                        // 5 sessions is not enough history
+  });
+});
+
+describe('foreign flow — stored per session, added up over any span', () => {
+  const day = (date, close, netForeign) => ({ date, close, netForeign });
+  const months = foreignMonths([
+    { code: 'AAAA', days: [day('2026-01-30', 100, 10e6), day('2026-02-02', 110, 20e6), day('2026-02-03', 121, -5e6)] },
+    { code: 'BBBB', days: [day('2025-12-01', 50, -30e6), day('2026-02-03', 40, -10e6)] }, // a long halt before February
+    { code: 'CCCC', days: [day('2026-01-30', 10, 0), day('2026-02-02', 10, 0)] },
+  ]);
+  const all = Object.assign({}, ...Object.values(months));
+
+  test('one item per month, net in Rp millions beside the close', () => {
+    strictEqual(Object.keys(months).sort().join(), '2025-12,2026-01,2026-02');
+    strictEqual(JSON.stringify(months['2026-02']['2026-02-03']), JSON.stringify({ AAAA: [-5, 121], BBBB: [-10, 40] }));
+  });
+
+  test('a span adds each stock up and measures its price from the close before', () => {
+    const f = foreignSpan(all, '2026-02-01', '2026-02-28');
+    strictEqual(f.from, '2026-02-02');
+    strictEqual(f.to, '2026-02-03');
+    strictEqual(f.sessions, 2);
+    strictEqual(f.net, 5e6);                                   // 20 − 5 − 10
+    strictEqual(f.stocks, 3);                                  // CCCC traded, with no net
+    strictEqual(JSON.stringify(f.buy), JSON.stringify([['AAAA', 15e6, 0.21]]));
+    strictEqual(JSON.stringify(f.sell), JSON.stringify([['BBBB', -10e6, null]])); // its last close is 64 days old
+  });
+
+  test('one session reads alone; a span with no session answers null', () => {
+    const f = foreignSpan(all, '2026-02-03', '2026-02-03');
+    strictEqual(f.net, -15e6);
+    strictEqual(JSON.stringify(f.buy), '[]');
+    strictEqual(foreignSpan(all, '2026-03-01', '2026-03-31'), null);
   });
 });

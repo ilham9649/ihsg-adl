@@ -306,9 +306,11 @@ function syncSession(note = '') {
   document.getElementById('session-next').disabled = i >= allData.length - 1;
   document.getElementById('session-latest').hidden = i === allData.length - 1;
   if (moversView === 'points') showMovers(session, { force: true, note });
+  else if (moversView === 'foreign') renderForeignView(note);
   else renderTopView();
   renderRotationFig();
   loadSession(session);
+  loadForeign();
 }
 
 function stepSession(dir) {
@@ -342,7 +344,7 @@ async function loadSession(date) {
   sessionData = data;
   renderWeightTile(data?.stocks, false);
   renderHeatmapFig();
-  if (moversView !== 'points') renderTopView();
+  if (moversView === 'price' || moversView === 'activity') renderTopView();
 }
 
 // ── The range on show ──
@@ -391,6 +393,7 @@ function pickRange() {
   pinCharts();
   renderRotationFig();
   loadRange();
+  loadForeign();
 }
 
 async function loadRange() {
@@ -539,6 +542,7 @@ const HEADS = {
   points: ['Lifted the index · points', 'Dragged it · points'],
   price: ['Top gainers · price %', 'Top losers · price %'],
   activity: ['Most traded · value, ≈Rp', 'Most traded · volume, shares'],
+  foreign: ['Foreign bought · net Rp', 'Foreign sold · net Rp'],
 };
 const compact = v => {
   const a = Math.abs(v);
@@ -551,7 +555,8 @@ function setMoversView(view) {
   document.getElementById('movers-head-up').textContent = HEADS[view][0];
   document.getElementById('movers-head-down').textContent = HEADS[view][1];
   document.querySelector('.movers-cols').classList.toggle('neutral', view === 'activity');
-  if (mode === 'range') renderRangeMovers();
+  if (view === 'foreign') renderForeignView();
+  else if (mode === 'range') renderRangeMovers();
   else if (view !== 'points') renderTopView();
   else showMovers(session, { force: true });
 }
@@ -734,7 +739,8 @@ async function loadFullDay(date, note) {
 
 function toggleMoversLimit() {
   moversLimit = moversLimit === MOVERS_SHORT ? MOVERS_LONG : MOVERS_SHORT;
-  if (mode === 'range') renderRangeMovers();
+  if (moversView === 'foreign') renderForeignView();
+  else if (mode === 'range') renderRangeMovers();
   else if (moversView !== 'points') renderTopView();
   else showMovers(moverDate, { force: true });
 }
@@ -743,6 +749,7 @@ function toggleMoversLimit() {
 // price and activity from the range's top lists.
 function renderRangeMovers() {
   if (!range) return;
+  if (moversView === 'foreign') { renderForeignView(); return; }
   const title = rangeTitle();
   const real = rangeData?.change != null ? { change: rangeData.change, pct: rangeData.pct } : ihsgMove(range.from, range.to);
   if (moversView === 'points') {
@@ -764,6 +771,93 @@ function renderRangeMovers() {
       ? `Across the whole listing: last close against the close before ${longDate(range.from)}. A stock that only began trading in the range, or came back from a long halt, has no move to rank.`
       : `Summed over the ${n} session${n === 1 ? '' : 's'}. Value is close × volume, an approximation — IDX's own figure prices each trade.`,
   });
+}
+
+// ── Foreign money: the headline figure and Who moved it's Foreign view ──
+// Stockbit's net foreign value for every stock the Bandarmology job covers,
+// added up over the session or the range on show (GET /api/foreign/{date} or
+// /api/foreign/{from}/{to}; foreignSpan in backend/scrapers/bandarmology.js).
+// Fetched on its own, like the movers, so the page never waits on it.
+let foreignData = null;      // the answer for the span on show, null if none
+let foreignPending = false;
+const foreignCache = new Map();
+let foreignRequest = 0;
+const foreignSpanOnShow = () => (mode === 'range' && range ? [range.from, range.to] : session ? [session, session] : null);
+const rpSigned = v => (v >= 0 ? '+' : '−') + compact(Math.abs(v));
+
+async function loadForeign() {
+  const span = foreignSpanOnShow();
+  if (!span) return;
+  const key = span[0] === span[1] ? span[0] : span.join('/');
+  const request = ++foreignRequest;
+  foreignPending = !foreignCache.has(key);
+  foreignData = foreignCache.get(key) ?? null;
+  renderForeign();
+  if (!foreignPending) return;
+  let payload = null;
+  try {
+    payload = await getJson(`/api/foreign/${key}`);
+  } catch (err) {
+    console.error('Foreign flow fetch error:', err);
+  }
+  const data = payload?.success ? payload : null;
+  if (payload) foreignCache.set(key, data); // a failed request may be retried; "nothing on record" is an answer
+  if (request !== foreignRequest) return;   // a newer pick won
+  foreignPending = false;
+  foreignData = data;
+  renderForeign();
+}
+
+function renderForeign() {
+  const dd = document.getElementById('hero-foreign');
+  setText('hero-foreign-label', mode === 'range' ? 'Foreign net, range' : 'Foreign net');
+  dd.textContent = foreignData ? rpSigned(foreignData.net).replace(/^([+−])/, '$1Rp ') : foreignPending ? '…' : '—';
+  dd.style.color = foreignData ? (foreignData.net >= 0 ? UP : DOWN) : '';
+  if (moversView === 'foreign') renderForeignView();
+}
+
+function renderForeignView(note = '') {
+  const span = foreignSpanOnShow();
+  if (!span) return;
+  const inRange = mode === 'range';
+  const title = inRange ? rangeTitle() : longDate(session);
+  document.getElementById('movers-date').textContent = title;
+  const real = ihsgMove(span[0], span[1]);
+  const move = document.getElementById('movers-move');
+  if (real.change != null) {
+    move.textContent = `IHSG ${fmtPts(real.change)} pts (${fmtPct(real.pct)})`;
+    move.className = 'movers-move ' + (real.change >= 0 ? 'up' : 'down');
+  } else move.textContent = '';
+  const more = document.getElementById('movers-more');
+  const foot = document.getElementById('movers-foot');
+  lastMovers = null;
+  if (!foreignData) {
+    fillMovers('movers-up', [], 1, '—');
+    fillMovers('movers-down', [], 1, '—');
+    more.hidden = true;
+    foot.textContent = (note ? note + ' ' : '') + (foreignPending ? 'Adding up the foreign flow…'
+      : `No foreign flow on record for this ${inRange ? 'range' : 'session'}. It arrives with the evening broker data, about 18:30 WIB.`);
+    return;
+  }
+  const { buy, sell, net, stocks, sessions } = foreignData;
+  const fill = (id, rows, empty) => {
+    const list = rows.slice(0, moversLimit);
+    if (!list.length) { fillMovers(id, [], 1, empty); return; }
+    const scale = Math.max(...list.map(r => Math.abs(r[1]))) || 1;
+    document.getElementById(id).replaceChildren(...list.map(([code, v, p]) => topItem(code, Math.abs(v) / scale, rpSigned(v),
+      p == null ? '—' : pctText(p * 100),
+      `Foreign investors net ${v >= 0 ? 'bought' : 'sold'} Rp ${compact(Math.abs(v))} of ${code}${p == null ? '' : `; its price ${pctText(p * 100)}`}`)));
+  };
+  fill('movers-up', buy, 'No net buying.');
+  fill('movers-down', sell, 'No net selling.');
+  more.hidden = Math.max(buy.length, sell.length) <= MOVERS_SHORT && moversLimit === MOVERS_SHORT;
+  more.textContent = moversLimit === MOVERS_SHORT ? `Show ${MOVERS_LONG}` : `Show ${MOVERS_SHORT}`;
+  const want = inRange ? range.sessions : 1;
+  foot.textContent = (note ? note + ' ' : '') +
+    `Across ${stocks.toLocaleString('en-US')} stocks, foreign investors were net ${net >= 0 ? 'buyers' : 'sellers'} of Rp ${compact(Math.abs(net))}` +
+    (inRange ? ` over ${sessions} session${sessions === 1 ? '' : 's'}` : '') + '. ' +
+    (sessions < want ? `The broker data covers ${sessions} of the range's ${want} sessions. ` : '') +
+    'Beside each, its price move over the same span.';
 }
 
 // The IHSG's own move over the range, from the page's daily closes.
