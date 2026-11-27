@@ -9,11 +9,12 @@
 //   node jobs/bandarmology/build.mjs --out f.json write a local file instead (no AWS)
 //
 // The --out file has the API's shape, so it can be served to the dev server
-// (`/api/bandarmology` from its `summary`, one stock from `series[CODE]`).
+// (`/api/bandarmology` from its `summary`, one stock from `series[CODE]`,
+// `foreign` the `fflow#` months, by month).
 
 import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildStock } from '../../backend/scrapers/bandarmology.js';
+import { buildStock, foreignMonths } from '../../backend/scrapers/bandarmology.js';
 
 const CACHE = process.env.BANDARMOLOGY_CACHE || '/root/bandarmology-cache';
 const outIdx = process.argv.indexOf('--out');
@@ -24,18 +25,20 @@ const readJson = (p, d) => { try { return JSON.parse(readFileSync(p, 'utf8')); }
 
 const universe = readJson(join(CACHE, 'universe.json'), null);
 const codes = universe?.codes || (existsSync(join(CACHE, 'bs')) ? readdirSync(join(CACHE, 'bs')) : []);
-const rows = [], seriesByCode = {};
+const rows = [], seriesByCode = {}, foreignStocks = [];
 let asOf = '';
 
 for (const code of codes) {
   const hist = readJson(join(CACHE, 'hist', `${code}.json`), null);
   const bsDir = join(CACHE, 'bs', code);
-  if (!hist || !existsSync(bsDir)) continue;
+  if (!hist) continue;
   const days = Object.entries(hist)
     .filter(([, v]) => v.frequency > 0 && v.close > 0)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, v]) => ({ date, open: v.open, high: v.high, low: v.low, close: v.close, lots: v.volume, trades: v.frequency, value: v.value, netForeign: v.net_foreign || 0 }));
-  if (days.length < 30) continue;
+  // The market's foreign total needs only the history, so every stock with one counts.
+  if (days.length) foreignStocks.push({ code, days });
+  if (!existsSync(bsDir) || days.length < 30) continue;
   const summaries = {};
   for (const f of readdirSync(bsDir)) {
     if (!f.endsWith('.json')) continue;
@@ -70,12 +73,22 @@ const summary = rows
 console.log(`bandarmology: ${summary.length} of ${codes.length} stocks current as of ${asOf}`);
 if (!summary.length) { console.error('nothing to write'); process.exit(1); }
 
+// The Market Map's foreign flow: every stock's net foreign per session, by
+// month. The history can run a session past the broker summaries, so it stops
+// where the board does; its first month is cut short by the history's start,
+// so it isn't written (an earlier run's fuller copy stays).
+const foreign = foreignMonths(foreignStocks.map(s => ({ ...s, days: s.days.filter(d => d.date <= asOf) })));
+delete foreign[Object.keys(foreign).sort()[0]];
+console.log(`foreign flow: ${Object.keys(foreign).length} months, ${Object.keys(foreign[asOf.slice(0, 7)]?.[asOf] || {}).length} stocks on ${asOf}`);
+
 if (OUT) {
-  writeFileSync(OUT, JSON.stringify({ summary: { success: true, asOf, attempted: codes.length, count: summary.length, data: summary }, series: seriesByCode }));
+  writeFileSync(OUT, JSON.stringify({ summary: { success: true, asOf, attempted: codes.length, count: summary.length, data: summary }, series: seriesByCode, foreign }));
   console.log(`written ${OUT}`);
 } else {
-  const { putBandarmology } = await import('../../backend/lib/db.js');
+  const { putBandarmology, putForeignMonths } = await import('../../backend/lib/db.js');
   const current = Object.fromEntries(summary.map(r => [r.code, seriesByCode[r.code]]));
   await putBandarmology({ asOf, rows: summary, attempted: codes.length }, current);
   console.log(`stored ${summary.length} stocks in DynamoDB`);
+  await putForeignMonths(foreign);
+  console.log('stored the foreign flow months');
 }

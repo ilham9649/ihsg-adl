@@ -9,9 +9,10 @@ import { fetchHeadlines, filterToday, wibDateString } from './scrapers/news.js';
 import { scoreSentiment } from './scrapers/sentiment.js';
 import { ma200wSnapshot, summarizeMa200w } from './scrapers/ma200w.js';
 import { computeMovers, moversHistoryStart, BASELINE_FLOATS, aggregateMovers, aggregateSession, parseRange, monthsSpanned, MOVERS_SESSIONS } from './scrapers/movers.js';
+import { foreignSpan } from './scrapers/bandarmology.js';
 import { createLedger, ledgerSpan, rankLedger, ledgerMoves } from './scrapers/ledger.js';
 import { buildFloatSnapshot } from './scrapers/freefloat.js';
-import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, putMovers, getMovers, putMoversMonths, getMoversDays, putFloatSnapshot, getFloatSnapshots, getSectors, putSectors, putLedger, getLedger, getTopDay, getBandarmology, getBandarmologyStock, acquireRefreshLock, releaseRefreshLock, acquireValuationLock, releaseValuationLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
+import { getAllData, batchPutData, deleteDates, putValuation, getValuation, putSentiment, getAllSentiment, putMa200wDaily, getAllMa200wDaily, putMa200wSnapshot, getMa200wSnapshot, putMovers, getMovers, putMoversMonths, getMoversDays, putFloatSnapshot, getFloatSnapshots, getSectors, putSectors, putLedger, getLedger, getTopDay, getBandarmology, getBandarmologyStock, getForeignDays, acquireRefreshLock, releaseRefreshLock, acquireValuationLock, releaseValuationLock, acquireSentimentCooldown, releaseSentimentCooldown } from './lib/db.js';
 
 const BASE_HEADERS = {
   'Content-Type': 'application/json',
@@ -545,6 +546,23 @@ export const handler = async (event) => {
       const stock = await getBandarmologyStock(code);
       if (!stock) return response(200, { success: false, message: `No bandarmology series for ${code}` }, { cacheable: true });
       return response(200, { success: true, code, updatedAt: stock.updatedAt, count: stock.series.length, data: stock.series }, { cacheable: true });
+    }
+
+    // Foreign flow over one session (/api/foreign/{date}) or a range
+    // (/api/foreign/{from}/{to}), for the Market Map — written by the openclaw
+    // job, so no refresh route. Dates in the path, like the movers range.
+    const foreign = method === 'GET' && path.match(/^\/api\/foreign\/([^/]+)(?:\/([^/]+))?\/?$/);
+    if (foreign) {
+      const dates = parseRange(foreign[1], foreign[2] || foreign[1]);
+      if (!dates) return response(400, { error: 'Dates must be YYYY-MM-DD' });
+      const months = monthsSpanned(dates.from, dates.to);
+      if (months.length > MAX_RANGE_MONTHS) return response(400, { error: `Ranges are limited to ${MAX_RANGE_MONTHS} months` });
+      // The month before too: a stock's price move starts at its last close before the range.
+      const [y, m] = dates.from.split('-').map(Number);
+      const before = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+      const result = foreignSpan(await getForeignDays([before, ...months]), dates.from, dates.to);
+      if (!result) return response(200, { success: false, message: 'No foreign flow on record in that range' }, { cacheable: true });
+      return response(200, { success: true, ...result }, { cacheable: true });
     }
 
     // Rides along with /api/ad/refresh like the 200-week page — no refresh route.

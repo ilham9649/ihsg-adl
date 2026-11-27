@@ -621,6 +621,36 @@ export async function getBandarmologyStock(code) {
   return { updatedAt: result.Item.updatedAt?.S || null, series: JSON.parse(result.Item.series.S) };
 }
 
+// ── Market foreign flow ──
+// Also written by the bandarmology job: every covered stock's net foreign
+// value and close for each session (foreignMonths in scrapers/bandarmology.js),
+// one item per month (`fflow#YYYY-MM`, ~500 stocks × ~22 sessions ≈ 250KB),
+// read by the Market Map's range route. The job may only put items, so old
+// months are left in place; each day is self-contained, so they stay correct.
+const FOREIGN_MONTH_PREFIX = 'fflow#';
+const ITEM_LIMIT = 390 * 1024;
+
+export async function putForeignMonths(months) {
+  const updatedAt = new Date().toISOString();
+  for (const [month, days] of Object.entries(months)) {
+    const body = JSON.stringify(days);
+    if (body.length > ITEM_LIMIT) throw new Error(`foreign flow ${month}: ${body.length} bytes, over DynamoDB's item limit`);
+    await client.send(new PutItemCommand({
+      TableName: TABLE_NAME,
+      Item: { date: { S: FOREIGN_MONTH_PREFIX + month }, updatedAt: { S: updatedAt }, days: { S: body } },
+    }));
+  }
+}
+
+/** The months asked for, merged: { date: { CODE: [netM, close] } }. */
+export async function getForeignDays(months) {
+  const results = await Promise.all(months.map(month => client.send(new GetItemCommand({
+    TableName: TABLE_NAME,
+    Key: { date: { S: FOREIGN_MONTH_PREFIX + month } },
+  }))));
+  return Object.assign({}, ...results.map(r => (r.Item?.days?.S ? JSON.parse(r.Item.days.S) : {})));
+}
+
 // ── Refresh Lock — prevents two overlapping full-universe A/D scrapes ──
 const LOCK_KEY = '_refresh_lock';
 const LOCK_TTL_MS = 30 * 60 * 1000; // 30 minutes

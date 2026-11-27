@@ -33,6 +33,7 @@ const TILES = [
         <dl class="hero-meta">
           <div><dt id="hero-range-label">Day's range</dt><dd id="hero-range">—</dd></div>
           <div><dt id="hero-pctadv-label">% Advancing</dt><dd><a href="/breadth.html" id="hero-pctadv">—</a></dd></div>
+          <div><dt id="hero-foreign-label">Foreign net</dt><dd id="hero-foreign" title="Net foreign buying minus selling, across the stocks Stockbit's broker data covers">—</dd></div>
         </dl>
       </div>
       <div class="tiles">
@@ -83,6 +84,7 @@ const TILES = [
             <button type="button" data-view="points" aria-pressed="true">Index points</button>
             <button type="button" data-view="price" aria-pressed="false">Price %</button>
             <button type="button" data-view="activity" aria-pressed="false">Value &amp; volume</button>
+            <button type="button" data-view="foreign" aria-pressed="false">Foreign</button>
           </div>
         </div>
         <div class="movers-title">
@@ -109,6 +111,11 @@ const TILES = [
             gap is printed above. Stocks IDX flags for concentrated ownership no longer count toward the index from
             their effective date. A date range adds up each stock's points over its sessions, and shows its own price
             move across them. For a date range, a stock's move is its own close to close, even across sessions it was out of the index. Covers the last year of sessions. In one-day mode, hover any candle to read that session.</p>
+          <p>Foreign is Stockbit's net foreign value (foreign buying minus foreign selling, in rupiah), added up over
+            the session or range, with each stock's price move across it. It covers the
+            <a href="/bandarmology.html">Bandarmology</a> stocks, the most traded and every actively traded one outside IDX's
+            concentrated-ownership list, where nearly all foreign money trades, but not the whole exchange, so the
+            total can differ from IDX's published figure. It arrives with the evening broker data, about 18:30 WIB.</p>
         </details>
       </div>
       <Fragment slot="how">
